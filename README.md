@@ -40,8 +40,22 @@ claude plugin marketplace add ~/development/theforge
 claude plugin install theforge@theforge-local
 ```
 
-After editing skills in this repo, reinstall (or re-add the marketplace) to pick
-up changes.
+## Developing (editing skills)
+
+The plugin cache only re-syncs on a **version bump**. After editing anything
+under `skills/` or `hooks/`:
+
+```bash
+# 1. bump "version" in .claude-plugin/plugin.json
+# 2. then:
+claude plugin update theforge@theforge-local
+# 3. restart the session to apply
+```
+
+This repo dogfoods its own conventions: design decisions are logged in
+`docs/theforge/DECISIONS.md` (read it before changing skill behavior) and
+consciously-skipped work in `docs/theforge/DEFERRALS.md`. The presence of
+`docs/theforge/` also opts this repo into its own session hook.
 
 ## What was cut from superpowers and why
 
