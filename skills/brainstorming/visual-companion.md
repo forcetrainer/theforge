@@ -19,25 +19,24 @@ a UI topic is not automatically visual — "what should the wizard do?" is
 conceptual (terminal); "which of these wizard layouts feels right?" is visual
 (browser).
 
-## The iteration loop
+## The refinement checkpoint
 
-Visuals are part of the design, so they go through the same approval discipline
-as everything else in brainstorming:
+Visuals follow the same rhythm as the rest of brainstorming — but the user
+decides when they're done, and your job is to *ask*, not to assume either way:
 
 1. **Present** — write a mockup (or several variants side by side) to `screen_dir`;
    the browser refreshes automatically.
 2. **Discuss in the terminal** — the user reacts in the CLI, never by clicking.
 3. **Checkpoint on selection** — when the user picks a direction, do not start
    building. Ask: *"Option A it is — want to refine it further or go deeper on
-   that direction, or is this good to fold into the design?"*
-4. **Refine** — apply the feedback, present the updated mockup, return to step 2.
-5. **Exit only on explicit approval** — keep iterating until the user says it's
-   good. Visual approval is part of the design-approval gate: a design with
-   unapproved mockups is not an approved design.
+   that direction, or is this good enough to fold into the design?"*
+4. **Their answer decides** — "refine" means apply the feedback, present the
+   updated mockup, and return to step 2 (ask again after). "We're good" means
+   fold the visual into the design and move on.
 
-The default assumption is *more refinement*, not building. Going from "user
-picked an option" straight to implementation is the failure mode this loop exists
-to prevent.
+The checkpoint hands the user the brake: they get an explicit moment to say
+"nah, we're good" — or to keep going. The failure mode this prevents is jumping
+from "user picked an option" straight to building without asking.
 
 ## How it works
 
