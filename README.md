@@ -43,7 +43,7 @@ claude plugin install theforge@theforge-local
 ## Developing (editing skills)
 
 The plugin cache only re-syncs on a **version bump**. After editing anything
-under `skills/` or `hooks/`:
+under `skills/`, `agents/`, or `hooks/`:
 
 ```bash
 # 1. bump "version" in .claude-plugin/plugin.json

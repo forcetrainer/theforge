@@ -53,23 +53,35 @@ declarations only, no bodies. Later tasks must use these exact names.
 
 **Acceptance:** the commands to run and what must pass.
 
+**Tier:** trivial | standard | complex.
+
 **Depends on:** Task M, or nothing.
 ```
 
 No placeholders at this level: never "TBD", "handle edge cases", or "add validation" — *name* the edge cases and the validation rules. The line is: name **what** to handle; don't write **how**.
 
+**Tier** is judged by what the task demands, not its category: a mechanical edit with no design content is trivial; a well-specified change with a clear test path is standard; novel design, cross-file impact, or ambiguous spec territory is complex. A "code implementation" task that's really one field threaded through one call site is trivial, whatever its name. The tier drives model routing and review depth at execution.
+
 ## Self-review
 
-Check the finished plan against the spec with fresh eyes: every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language. Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
+Check the finished plan against the spec with fresh eyes: every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language; each tier holds in both directions — would a smaller model handle this cleanly, and does any "trivial" task hide a design decision? Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
 
 ## Execution
 
-Offer the user the choice, with a recommendation by size:
+Each task's tier routes to a shipped worker agent. Routing is absolute — the session's model and effort settings never apply to subagent execution:
 
-- **Small plans (≤3 tasks, or low-risk throughout): inline.** Execute task-by-task in this session using the **tdd** skill. Check off steps, commit per task.
-- **Larger plans: a Workflow script.** One implementer agent per task (give it the task text, spec path, relevant DECISIONS.md content, the deferral rule below, and TDD discipline), pipelined so independent tasks overlap and `Depends on` is respected. After each substantive task, **one combined review** covering spec compliance and code quality together; dispatch a second reviewer only if the first finds substantive issues, and loop the implementer until clean.
+| Tier | Agent | Profile |
+|---|---|---|
+| trivial | `theforge:forge-light` | haiku |
+| standard | `theforge:forge-standard` | sonnet · high effort |
+| complex | `theforge:forge-deep` | opus · xhigh effort |
 
-**Proportional review:** trivial tasks — config changes, renames, one-liners — skip subagent review entirely; passing their acceptance commands is verification enough. Substantive tasks get the combined review.
+Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") so tiers can be overridden before anything runs:
+
+- **Small plans (≤3 tasks, or low-risk throughout): inline.** Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
+- **Larger plans: a Workflow script.** One worker per task, spawned as the task's tier agent via `agentType` (give it the task text, spec path, relevant DECISIONS.md content, the deferral rule below, and TDD discipline), pipelined so independent tasks overlap and `Depends on` is respected. After each standard or complex task, **one combined review** by `theforge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `theforge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
+
+**Proportional review:** trivial-tier tasks skip subagent review entirely; passing their acceptance commands is verification enough. Standard and complex tasks get the combined review.
 
 **Deferral rule:** implementers may skip **non-spec scope** (nice-to-haves, refactors, edge polish) with a `docs/theforge/DEFERRALS.md` entry explaining why (formats: project-memory skill). Spec'd requirements are never silently deferred — flag them at the review gate. List all new deferrals in the end-of-plan summary.
 

@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-06-10 — Session-independent model/effort routing via per-task tiers and three depth-profile agents
+**Why:** Subagents inherit the session's model *and* effort by default, so an accidental `/model` switch (or a deliberately cheap session) silently degrades plan execution. The planner tags each task trivial/standard/complex by characteristics — not category — at plan time (re-checked in self-review), and tags route absolutely: forge-light (haiku), forge-standard (sonnet/high), forge-deep (opus/xhigh). Agent frontmatter is the only mechanism that can pin effort, which is why the plugin ships agent definitions despite the lean ethos. Routing is disclosed in the execution offer; the user overrides at the gate. A dedicated router agent was considered and rejected — it has less context than the planner and adds a hop.
+**Where:** skills/planning/SKILL.md, agents/
+
 ## 2026-06-10 — Plans specify what/where, never implementation code
 **Why:** Embedded code was superpowers' single biggest token sink — written without compiler/test feedback, usually wrong by execution time, written twice. The contract rule governs exceptions: signatures, schemas, wire formats, and requirement-algorithms are decisions and belong; bodies and test code are solutions and don't.
 **Where:** skills/planning/SKILL.md, docs/notes/superpowers-assessment.md
