@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: Use before creative work — new features, new components, behavior changes. Turns an idea into a validated design spec through collaborative dialogue, before any planning or implementation.
+description: Use before creative work — new features, new components, behavior changes. Not for trivial mechanical edits, bug fixes with a clear repro, or questions. Turns an idea into a validated design spec through collaborative dialogue, before any planning or implementation.
 ---
 
 # Brainstorming

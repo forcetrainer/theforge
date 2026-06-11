@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-06-10 — TDD infrastructure gate: harness creation is plan-level work, never drive-by
+**Why:** Third superpowers sink (after embedded code and 3-agent review): the near-verbatim tdd skill had no trigger floor, so a trivial edit to an untested artifact ran the full Iron Law — observed in Codex as 1.5 hours bootstrapping a test stack for a single 67kb HTML file. The gate keys on sanctioned scope, not harness existence: existing suite → use it, never a parallel stack; approved plan including test setup → build it (new codebases get tests this way, through the plan gate); ad-hoc edit with no harness → ask one question (set up testing vs. verify manually). Trivial mechanical edits don't trigger the skill at all, and the don't-trigger exclusions now live in the frontmatter descriptions — the always-loaded trigger surface — not just the skill bodies.
+**Where:** skills/tdd/SKILL.md, skills/brainstorming/SKILL.md
+
 ## 2026-06-10 — Session-independent model/effort routing via per-task tiers and three depth-profile agents
 **Why:** Subagents inherit the session's model *and* effort by default, so an accidental `/model` switch (or a deliberately cheap session) silently degrades plan execution. The planner tags each task trivial/standard/complex by characteristics — not category — at plan time (re-checked in self-review), and tags route absolutely: forge-light (haiku), forge-standard (sonnet/high), forge-deep (opus/xhigh). Agent frontmatter is the only mechanism that can pin effort, which is why the plugin ships agent definitions despite the lean ethos. Routing is disclosed in the execution offer; the user overrides at the gate. A dedicated router agent was considered and rejected — it has less context than the planner and adds a hop.
 **Where:** skills/planning/SKILL.md, agents/

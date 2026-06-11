@@ -1,9 +1,11 @@
 ---
 name: tdd
-description: Use when implementing any feature or bugfix, before writing implementation code
+description: Use when implementing any feature or bugfix, before writing implementation code. Not for trivial mechanical edits — typos, copy changes, config values, style tweaks.
 ---
 
 # Test-Driven Development (TDD)
+
+**Trigger:** implementing features, bug fixes, refactors, behavior changes. **Don't trigger:** trivial mechanical edits — typos, copy changes, config values, style tweaks. No test ceremony for those. (Once the skill applies, "too simple to test" stops being an excuse — see Common Rationalizations.)
 
 ## Overview
 
@@ -27,6 +29,16 @@ Write the test first. Watch it fail. Write minimal code to pass.
 - Configuration files
 
 Thinking "skip TDD just this once"? Stop. That's rationalization.
+
+## Test Infrastructure Gate
+
+Building test infrastructure is plan-level work, never drive-by work.
+
+- **Project has a test suite** → use it. New tests (and new test files) go in the existing harness; never introduce a parallel test stack.
+- **No harness, but you're executing an approved plan that includes test setup** → build it as planned. New codebases get their tests this way.
+- **No harness and the request is an ad-hoc edit** → STOP. Don't bootstrap a test stack unilaterally. Ask your human partner: set up testing for this project, or verify this change manually? One question — not an unrequested project.
+
+This gate is not an escape hatch from the Iron Law. It governs *where tests run*, not *whether code gets tested*: wherever a harness exists or a plan sanctions one, the Iron Law applies in full.
 
 ## The Iron Law
 
