@@ -1,5 +1,21 @@
 # Decisions
 
+## 2026-07-02 — Three-gear pipeline; gear 2 lives inside the brainstorming skill
+**Why:** Proportionality at pipeline level: gear 1 = trigger floors (unchanged), gear 2 = delta to an already-spec'd system (conversational design, one gate, straight to tdd — no spec/plan files), gear 3 = full flow for new architecture. Routing test is architectural (creates vs. operates within), not size. Rejected: a separate gear-2 skill (fourth trigger surface that must not mis-fire against brainstorming's) and putting the gear-2 procedure in planning (the gate is design dialogue, which brainstorming owns). Tripwires: no nameable owning spec → gear 3; design outgrows a paragraph → escalate, never stretch the conversational gate.
+**Where:** docs/theforge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md, skills/brainstorming/SKILL.md
+
+## 2026-07-02 — Living specs: amend in place, dated changelog inside the spec, no fourth memory file
+**Why:** Specs are per-system documents, not frozen snapshots — a gear-2 change that alters what a spec asserts amends that spec, with a one-line dated changelog entry at the spec's end. Keeps the memory surface at specs/plans/DECISIONS/DEFERRALS/ROADMAP; the self-anchoring rule ("which spec owns this?") doubles as the gear-2/3 tripwire.
+**Where:** docs/theforge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md
+
+## 2026-07-02 — Specs/plans are agent-consumed: telegraphic style contract; spec re-review demoted
+**Why:** Every sentence must carry a requirement, contract, or decision — cut narration, never information (edge cases, interfaces, acceptance criteria stay). Clarifying questions batch 2–3 per turn (single only on design forks); check-ins are decision digests; the sectioned walkthrough IS the approval gate, so the mandatory end-of-brainstorm file re-review is demoted to a close-out notification. Guard: trim toward decision-relevant, not short — gates that rubber-stamp are dead controls.
+**Where:** docs/theforge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md, skills/brainstorming/SKILL.md, skills/planning/SKILL.md
+
+## 2026-07-02 — TDD skill cut to operational core (~600 words); anti-rationalization armor dropped
+**Why:** The rationalization tables, sunk-cost lectures, and good/bad code examples were written to police weaker models, and the text loads into every implementing worker on every task. Iron Law, infrastructure gate, verify-red/verify-green, and the final checklist carry the entire discipline; testing-anti-patterns.md stays as on-demand reference.
+**Where:** docs/theforge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md, skills/tdd/SKILL.md
+
 ## 2026-06-10 — TDD infrastructure gate: harness creation is plan-level work, never drive-by
 **Why:** Third superpowers sink (after embedded code and 3-agent review): the near-verbatim tdd skill had no trigger floor, so a trivial edit to an untested artifact ran the full Iron Law — observed in Codex as 1.5 hours bootstrapping a test stack for a single 67kb HTML file. The gate keys on sanctioned scope, not harness existence: existing suite → use it, never a parallel stack; approved plan including test setup → build it (new codebases get tests this way, through the plan gate); ad-hoc edit with no harness → ask one question (set up testing vs. verify manually). Trivial mechanical edits don't trigger the skill at all, and the don't-trigger exclusions now live in the frontmatter descriptions — the always-loaded trigger surface — not just the skill bodies.
 **Where:** skills/tdd/SKILL.md, skills/brainstorming/SKILL.md
