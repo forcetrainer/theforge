@@ -14,7 +14,7 @@
 **Note on `**Spec:**` lines below:** this plan uses the task-level `**Spec:**` line that Task 1 adds to the template — headings refer to sections of the phase-2 spec.
 
 ### Task 1: Planning skill — plan-time additions + Execution rewrite
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `skills/planning/SKILL.md`
@@ -39,7 +39,7 @@
 **Depends on:** nothing
 
 ### Task 2: Agent files — reviewer integrity
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `agents/forge-standard.md` (review paragraph)
@@ -58,7 +58,7 @@
 **Depends on:** nothing
 
 ### Task 3: extract-brief.py + tests
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `scripts/extract-brief.py`
@@ -92,7 +92,7 @@
 **Depends on:** nothing
 
 ### Task 4: review-packet.py + tests
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `scripts/review-packet.py`
@@ -123,7 +123,7 @@
 **Depends on:** nothing
 
 ### Task 5: Version bump + README
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `.claude-plugin/plugin.json` (version 0.3.0 → 0.4.0)
