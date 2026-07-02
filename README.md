@@ -28,6 +28,10 @@ scope but must log why.
 | `tdd` | Red-green-refactor discipline, cut to its operational core. |
 | `project-memory` | Formats and rules for ROADMAP / DECISIONS / DEFERRALS. |
 
+## Pipeline Scripts
+
+Two Python 3 CLI scripts generate orchestration artifacts: `scripts/extract-brief.py` extracts worker briefs from plans and specs, and `scripts/review-packet.py` generates review packets from task diffs.
+
 ## Hooks
 
 One conditional `SessionStart` hook: injects ~60 words of flow context, but only

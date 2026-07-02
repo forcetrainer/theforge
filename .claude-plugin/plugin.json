@@ -1,7 +1,7 @@
 {
   "name": "theforge",
   "description": "Token-efficient development flow: brainstorm → spec → plan → TDD execution, with project memory (roadmap, decisions, deferrals). A personal fork of superpowers.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "Bryan Inagaki",
     "email": "bryan@inagaki.us"
