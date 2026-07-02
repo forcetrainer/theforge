@@ -21,7 +21,7 @@ One plan per subsystem. Each plan must produce working, testable software on its
 
 ## File structure first
 
-Before defining tasks, map which files will be created or modified and what each is responsible for — one clear responsibility per file, smaller focused files over large ones, split by responsibility not technical layer. In existing codebases follow established patterns. This map drives the task decomposition.
+Before defining tasks, map which files will be created or modified and what each is responsible for — one clear responsibility per file, smaller focused files over large ones, split by responsibility not technical layer. In existing codebases follow established patterns. This map drives the task decomposition. Minimize dependency chains: wall-clock time is the critical path, not the task count — prefer decompositions that share interfaces over ones that impose sequence.
 
 ## Plan header
 
@@ -50,6 +50,8 @@ Omit `**Global Constraints:**` entirely when the plan has none — never an empt
 - Modify: `exact/path/to/existing.py` (what changes)
 - Test: `tests/exact/path/to/test.py`
 
+**Spec:** [section heading], [section heading]
+
 **Interface:** signatures, types, and names this task introduces or changes —
 declarations only, no bodies. Later tasks must use these exact names.
 
@@ -65,7 +67,9 @@ declarations only, no bodies. Later tasks must use these exact names.
 
 No placeholders at this level: never "TBD", "handle edge cases", or "add validation" — *name* the edge cases and the validation rules. The line is: name **what** to handle; don't write **how**.
 
-**Tier** is judged by what the task demands, not its category: a mechanical edit with no design content is trivial; a well-specified change with a clear test path is standard; novel design, cross-file impact, or ambiguous spec territory is complex. A "code implementation" task that's really one field threaded through one call site is trivial, whatever its name. The tier drives model routing and review depth at execution.
+**Spec:** is optional — the spec sections this task's worker needs, named by heading text (unique prefix acceptable; matched case-insensitively at extraction time). Omit when the task needs no spec context. It drives mechanical brief extraction at execution (`extract-brief.py`).
+
+**Tier** is judged by what the task demands, not its category: a mechanical edit with no design content is trivial; a well-specified change with a clear test path is standard; novel design, cross-file impact, or ambiguous spec territory is complex. A "code implementation" task that's really one field threaded through one call site is trivial, whatever its name. The tier drives model routing and review depth at execution. When interfaces and test cases are fully enumerated, prefer the lower tier — the worker has less to decide, not less to verify.
 
 ## Self-review
 
@@ -83,13 +87,21 @@ Each task's tier routes to a shipped worker agent. Routing is absolute — the s
 
 Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") so tiers can be overridden before anything runs:
 
-- **Small plans (≤3 tasks, or low-risk throughout): inline.** Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
-- **Larger plans: a Workflow script.** One worker per task, spawned as the task's tier agent via `agentType` (give it the task text, spec path, relevant DECISIONS.md content, the deferral rule below, and TDD discipline), pipelined so independent tasks overlap and `Depends on` is respected. After each standard or complex task, **one combined review** by `theforge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `theforge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
+- **Inline when accumulated context is an asset:** few tasks, and later tasks build on seeing earlier work's output. Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
+- **Dispatch otherwise — even for serial phases:** worker context is born, used, and discarded; inline context compounds forever. A Workflow script spawns one worker per task as the task's tier agent via `agentType` — its prompt carries the brief-file path (from `extract-brief.py`), relevant DECISIONS.md content, the deferral rule below, and TDD discipline — pipelined so independent tasks overlap and `Depends on` is respected. All trivial-tier tasks batch into a single `forge-light` dispatch, respecting `Depends on` among them. After each standard or complex task, **one combined review** by `theforge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `theforge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
+
+**File-referenced briefs:** worker prompts carry a brief-file path plus the exact file paths the worker needs — never pasted plan or spec content. Generate the brief with `extract-brief.py`; its instructions bound the worker's reading explicitly: "read these N files and spec §X, nothing else."
+
+**Thin orchestrator:** workers report back in one paragraph, not a transcript. Diffs and review packets travel reviewer-to-file via `review-packet.py`, never through orchestrating context. The orchestrator never pre-rates finding severity when handing a diff to a reviewer.
+
+**Rework guardrails:** review loops cap at 2 iterations, then escalate to the user with the outstanding findings rather than looping further. The end-of-plan summary reports review-cycle counts per task.
 
 **Proportional review:** trivial-tier tasks skip subagent review entirely; passing their acceptance commands is verification enough. Standard and complex tasks get the combined review.
+
+**Final review:** once every task in a multi-task plan passes, run one broad review on `theforge:forge-deep` against the whole-plan diff and spec — integration issues a per-task review can't see. This runs alongside the full-test-suite close-out below, not instead of it.
 
 **Deferral rule:** implementers may skip **non-spec scope** (nice-to-haves, refactors, edge polish) with a `docs/theforge/DEFERRALS.md` entry explaining why (formats: project-memory skill). Spec'd requirements are never silently deferred — flag them at the review gate. List all new deferrals in the end-of-plan summary.
 
 Plans written before this fork (embedded implementation code, subagent-driven-development headers) execute fine under this section: treat embedded code as a suggestion to re-derive via TDD, not text to paste.
 
-When all tasks are done: run the full test suite, mark the roadmap phase `done` if a roadmap exists, then follow the branch-finishing preferences in CLAUDE.md. The end-of-plan summary leads with failures, deviations, deferrals — not achievements.
+When all tasks are done: run the full test suite, mark the roadmap phase `done` if a roadmap exists, then follow the branch-finishing preferences in CLAUDE.md. The end-of-plan summary leads with failures, deviations, deferrals — not achievements. Recurring "wouldn't have done it that way" review calls become written conventions — CLAUDE.md, or DECISIONS.md when architectural.
