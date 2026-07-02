@@ -9,6 +9,8 @@ description: Use after a spec is approved, or for any multi-step implementation 
 
 A plan specifies **what and where — never implementation code**. It locks in design decisions: files touched, interfaces and signatures, the test cases to write, acceptance criteria, ordering. The code itself is written once, during execution, with compiler and test feedback. Writing it earlier in the plan means writing it twice and getting it wrong the first time.
 
+Plan prose is agent-consumed, not narrative: apply the brainstorming skill's sentence test — every sentence carries a requirement, contract, or decision, else cut.
+
 **Save to:** `docs/theforge/plans/YYYY-MM-DD-<feature>.md` and commit. (User/project preferences for plan location override this default.)
 
 **Before writing:** read `docs/theforge/DECISIONS.md` if present — the plan must not contradict logged decisions; surface conflicts to the user. Code in the plan follows the same contract rule as specs: signatures, schemas, and wire formats are decisions and belong; bodies, test code, and boilerplate are solutions and don't.
@@ -32,7 +34,10 @@ Before defining tasks, map which files will be created or modified and what each
 **Goal:** [one sentence]
 **Architecture:** [2–3 sentences]
 **Tech stack:** [key technologies/libraries]
+**Global Constraints:** [version floors, dependency limits, naming rules]
 ```
+
+Omit `**Global Constraints:**` entirely when the plan has none — never an empty block.
 
 ## Task structure
 
@@ -87,4 +92,4 @@ Offer the user the choice, with a recommendation by size, and **disclose the res
 
 Plans written before this fork (embedded implementation code, subagent-driven-development headers) execute fine under this section: treat embedded code as a suggestion to re-derive via TDD, not text to paste.
 
-When all tasks are done: run the full test suite, mark the roadmap phase `done` if a roadmap exists, then follow the branch-finishing preferences in CLAUDE.md.
+When all tasks are done: run the full test suite, mark the roadmap phase `done` if a roadmap exists, then follow the branch-finishing preferences in CLAUDE.md. The end-of-plan summary leads with failures, deviations, deferrals — not achievements.

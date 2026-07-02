@@ -39,7 +39,7 @@
 **Depends on:** nothing.
 
 ### Task 2: Planning skill — Global Constraints block, style contract, failure-first summary
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `skills/planning/SKILL.md` (spec §2)
