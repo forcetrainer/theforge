@@ -1,0 +1,5 @@
+{
+  "name": "theforge",
+  "version": "0.4.1",
+  "description": "Token-efficient development flow: brainstorm → spec → plan → TDD execution, with project memory (roadmap, decisions, deferrals). A personal fork of superpowers."
+}
