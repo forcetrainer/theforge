@@ -8,7 +8,9 @@ the token cost.
 ## The flow
 
 **Brainstorm → spec → plan → implement**, with approval gates between each stage.
-Brainstorming turns an idea into a user-reviewed spec (`docs/theforge/specs/`).
+The flow operates in three gears: trivial edits bypass it entirely; changes to an already-specified system take a lightweight conversational gate straight to TDD (gear 2); new architecture invokes the full brainstorm → spec → plan → execute sequence (gear 3).
+Brainstorming turns an idea into a user-reviewed spec (`docs/theforge/specs/`), drawing first-class input from `docs/theforge/ideas/` docs.
+Specs are living documents: amendments are made in place and logged with a dated changelog entry.
 Planning turns the spec into a plan of *what and where* — files, interfaces, test
 cases, acceptance criteria, never implementation code (`docs/theforge/plans/`).
 Execution runs task-by-task with strict TDD, inline for small plans or via a
@@ -21,10 +23,14 @@ scope but must log why.
 
 | Skill | Purpose |
 |---|---|
-| `brainstorming` | Idea → validated design → spec, through one-question-at-a-time dialogue. Includes the browser-based visual companion for mockups. |
+| `brainstorming` | Gear routing, then idea → validated design → spec through batched-question dialogue. Includes the browser-based visual companion for mockups. |
 | `planning` | Spec → implementation plan (what/where, no code) → execution. |
-| `tdd` | Red-green-refactor discipline, kept nearly verbatim from superpowers. |
+| `tdd` | Red-green-refactor discipline, cut to its operational core. |
 | `project-memory` | Formats and rules for ROADMAP / DECISIONS / DEFERRALS. |
+
+## Pipeline Scripts
+
+Two Python 3 CLI scripts generate orchestration artifacts: `scripts/extract-brief.py` extracts worker briefs from plans and specs, and `scripts/review-packet.py` generates review packets from task diffs.
 
 ## Hooks
 

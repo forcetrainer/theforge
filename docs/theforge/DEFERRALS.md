@@ -1,5 +1,10 @@
 # Deferrals
 
+## 2026-07-02 — Tier-down pipeline-depth experiment
+**Why:** The tier-down preference (fully enumerated interfaces + tests → lower tier) ships as two sentences in phase 2 without the proposed two-run A/B experiment; observed defects are taste-misses, which are tier-insensitive, and the review pass backstops real errors.
+**From:** docs/theforge/ideas/2026-07-02-upgrade-cycle.md (§6 open question)
+**Follow-up:** revisit-when-phase-2-execution-shows-tier-related-defects
+
 ## 2026-06-10 — Skill test harness
 **Why:** Superpowers' `tests/` drives the `claude` CLI to verify skills trigger and behave; valuable for continual refinement but heavy to maintain.
 **From:** Initial fork plan
