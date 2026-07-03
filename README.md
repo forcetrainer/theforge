@@ -41,6 +41,8 @@ descriptions handle that in every session.
 
 ## Install
 
+### Claude Code
+
 ```bash
 claude plugin marketplace add forcetrainer/theforge
 claude plugin install theforge@theforge
@@ -48,6 +50,30 @@ claude plugin install theforge@theforge
 
 To update later: `claude plugin update theforge@theforge` (or `git pull` in a
 local clone).
+
+### Codex CLI
+
+```bash
+codex plugin marketplace add ~/development/theforge
+codex plugin install theforge@theforge
+```
+
+Then copy the tier agents to your Codex config:
+
+```bash
+cp codex/agents/*.toml ~/.codex/agents/
+```
+
+**On plugin update:** Re-run the copy command above to get the latest agent
+definitions. The `.toml` files are not bundled in the marketplace; they live in
+the repo and must be synced manually.
+
+**Known Codex caveats:**
+- Subagent selection has known regressions in CLI behavior (e.g., selection may not
+  honor model/effort hints in older versions). If spawned agents run the wrong
+  model, file an issue against [openai/codex#19197](https://github.com/openai/codex/issues/19197).
+- Worker list accumulation: spawned subagents persist in the CLI's agent list.
+  If the list grows unbounded across sessions, see [openai/codex#22779](https://github.com/openai/codex/issues/22779).
 
 ## Developing (editing skills)
 
