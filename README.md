@@ -54,9 +54,13 @@ local clone).
 ### Codex CLI
 
 ```bash
-codex plugin marketplace add ~/development/theforge
+codex plugin marketplace add /path/to/theforge
 codex plugin install theforge@theforge
 ```
+
+The `SessionStart` hook works on Codex with no extra wiring — the shared
+`hooks/hooks.json` schema is compatible and Codex sets `CLAUDE_PLUGIN_ROOT`
+for plugin-hook compatibility.
 
 Then copy the tier agents to your Codex config:
 
@@ -69,11 +73,16 @@ definitions. The `.toml` files are not bundled in the marketplace; they live in
 the repo and must be synced manually.
 
 **Known Codex caveats:**
-- Subagent selection has known regressions in CLI behavior (e.g., selection may not
-  honor model/effort hints in older versions). If spawned agents run the wrong
-  model, file an issue against [openai/codex#19197](https://github.com/openai/codex/issues/19197).
-- Worker list accumulation: spawned subagents persist in the CLI's agent list.
-  If the list grows unbounded across sessions, see [openai/codex#22779](https://github.com/openai/codex/issues/22779).
+- Subagent selection has known regressions in CLI behavior (e.g., custom-agent
+  selection broke in v0.137.0 and spawned agents silently inherited the parent
+  model). If spawned agents run the wrong model, verify via acceptance commands
+  rather than trusting the spawn.
+- Worker accumulation: spawned subagents persist in the CLI's agent list, and
+  completed workers keep counting against the thread limit
+  ([openai/codex#19197](https://github.com/openai/codex/issues/19197),
+  [openai/codex#22779](https://github.com/openai/codex/issues/22779)).
+  Sequential dispatch (`skills/planning/codex-execution.md`) is the mitigation;
+  theforge deliberately builds no cleanup machinery.
 
 ## Developing (editing skills)
 

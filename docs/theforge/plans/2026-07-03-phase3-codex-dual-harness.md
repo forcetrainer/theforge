@@ -9,7 +9,7 @@
 **Global Constraints:** Python ≥3.11 (tomllib), stdlib only — no new dependencies. Plugin versions in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` stay in lockstep. No Claude Code behavior changes: existing files untouched except one branch line in `skills/planning/SKILL.md`, README additions, and the lockstep version bump. Spec: docs/theforge/specs/2026-07-03-phase3-codex-dual-harness-design.md.
 
 ### Task 1: Codex plugin + marketplace manifests, manifest tests
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `.codex-plugin/plugin.json`
@@ -29,7 +29,7 @@
 **Depends on:** nothing
 
 ### Task 2: TOML tier agents
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `codex/agents/forge-light.toml`
@@ -50,7 +50,7 @@
 **Depends on:** nothing
 
 ### Task 3: Codex hook wiring
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `hooks/hooks.json` (only if Codex schema verified compatible — else untouched)
@@ -70,7 +70,7 @@
 **Depends on:** Task 1 (extends `tests/test_manifests.py`)
 
 ### Task 4: Harness-conditional execution reference
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `skills/planning/codex-execution.md`
@@ -89,7 +89,7 @@
 **Depends on:** nothing
 
 ### Task 5: README Codex section + lockstep version bump
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `README.md` (new Codex install section)
