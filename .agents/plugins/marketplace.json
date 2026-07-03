@@ -1,0 +1,15 @@
+{
+  "name": "theforge",
+  "interface": {
+    "displayName": "theforge"
+  },
+  "plugins": [
+    {
+      "name": "theforge",
+      "source": {
+        "source": "local",
+        "path": "./"
+      }
+    }
+  ]
+}

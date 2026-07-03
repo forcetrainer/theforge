@@ -87,6 +87,7 @@ Each task's tier routes to a shipped worker agent. Routing is absolute — the s
 
 Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") so tiers can be overridden before anything runs:
 
+- **Workflow tool unavailable:** read `codex-execution.md` in this skill directory.
 - **Inline when accumulated context is an asset:** few tasks, and later tasks build on seeing earlier work's output. Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
 - **Dispatch otherwise — even for serial phases:** worker context is born, used, and discarded; inline context compounds forever. A Workflow script spawns one worker per task as the task's tier agent via `agentType` — its prompt carries the brief-file path (from `extract-brief.py`), relevant DECISIONS.md content, the deferral rule below, and TDD discipline — pipelined so independent tasks overlap and `Depends on` is respected. All trivial-tier tasks batch into a single `forge-light` dispatch, respecting `Depends on` among them. After each standard or complex task, **one combined review** by `theforge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `theforge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
 
