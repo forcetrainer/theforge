@@ -6,7 +6,7 @@
 **Goal:** Make theforge installable on Codex CLI from this repo alongside Claude Code, sharing skills/scripts/hook-script verbatim.
 **Architecture:** Harness divergence isolated to four surfaces: Codex manifests (`.codex-plugin/`, `.agents/plugins/`), TOML tier agents (`codex/agents/`), hook wiring config, and one execution reference file (`skills/planning/codex-execution.md`) loaded only when the Workflow tool is absent. Everything else is shared.
 **Tech stack:** JSON manifests, TOML agent definitions, bash hook script (existing), pytest + Python stdlib (`json`, `tomllib`) for validation tests.
-**Global Constraints:** Python ≥3.11 (tomllib), stdlib only — no new dependencies. Plugin versions in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` stay in lockstep. No Claude Code behavior changes: existing files untouched except one branch line in `skills/planning/SKILL.md`, README additions, and the lockstep version bump. Spec: docs/theforge/specs/2026-07-03-phase3-codex-dual-harness-design.md.
+**Global Constraints:** Python ≥3.11 (tomllib), stdlib only — no new dependencies. Plugin versions in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` stay in lockstep. No Claude Code behavior changes: existing files untouched except one branch line in `skills/planning/SKILL.md`, README additions, and the lockstep version bump. Spec: docs/forge/specs/2026-07-03-phase3-codex-dual-harness-design.md.
 
 ### Task 1: Codex plugin + marketplace manifests, manifest tests
 - [x] Done

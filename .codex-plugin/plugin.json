@@ -1,5 +1,5 @@
 {
-  "name": "theforge",
-  "version": "0.5.0",
-  "description": "Token-efficient development flow: brainstorm → spec → plan → TDD execution, with project memory (roadmap, decisions, deferrals). A personal fork of superpowers."
+  "name": "forge",
+  "version": "0.6.0",
+  "description": "Token-efficient development flow: brainstorm \u2192 spec \u2192 plan \u2192 TDD execution, with project memory (roadmap, decisions, deferrals). A personal fork of superpowers."
 }

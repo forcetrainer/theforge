@@ -58,9 +58,9 @@ review-packet.py <plan.md> <task-number> --base <git-ref> [--out <dir>]
 
 ## 5. Acceptance
 
-- Both scripts run against phase-1 artifacts (`docs/theforge/plans/2026-07-02-phase1-pipeline-skill-edits.md` + its spec): extract a real task brief; generate a packet from a real commit range; error paths exit nonzero (bad task number, unmatched spec section).
+- Both scripts run against phase-1 artifacts (`docs/forge/plans/2026-07-02-phase1-pipeline-skill-edits.md` + its spec): extract a real task brief; generate a packet from a real commit range; error paths exit nonzero (bad task number, unmatched spec section).
 - Planning skill still satisfies the phase-1 style contract (sentence test) after edits.
-- Plugin version bumped; `claude plugin update theforge@theforge-local` run before validation in a fresh session.
+- Plugin version bumped; `claude plugin update forge@forge-local` run before validation in a fresh session.
 
 ## 6. Out of scope
 

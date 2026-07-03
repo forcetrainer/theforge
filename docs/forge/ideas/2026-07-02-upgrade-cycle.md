@@ -41,7 +41,7 @@ decompose into phases, and produce specs.*
 ## 3. Ideation handoff
 
 - External ideation docs (like this one) are first-class brainstorm input. Location:
-  `docs/theforge/ideas/` or path handed at kickoff.
+  `docs/forge/ideas/` or path handed at kickoff.
 - Brainstorming treats the doc as pre-answered clarification: read, confirm understanding, flag
   DECISIONS conflicts, skip answered questions, go to approaches.
 - Only applies when an idea graduates to "building this" — free-form ideation stays unprocessed.

@@ -1,6 +1,6 @@
 # Phase 3: Codex dual-harness packaging — design
 
-Goal: theforge installable on Codex CLI from this repo, alongside Claude Code. Skills, scripts, and the session-start script are shared verbatim; harness divergence is isolated to manifests, agent definitions, hook wiring, and one execution reference file.
+Goal: forge installable on Codex CLI from this repo, alongside Claude Code. Skills, scripts, and the session-start script are shared verbatim; harness divergence is isolated to manifests, agent definitions, hook wiring, and one execution reference file.
 
 ## Verified harness contracts (July 2026)
 
@@ -14,7 +14,7 @@ Goal: theforge installable on Codex CLI from this repo, alongside Claude Code. S
 ## Deliverables
 
 ### 1. Codex manifests
-- `.codex-plugin/plugin.json`: name `theforge`, description matching `.claude-plugin/plugin.json`, version **kept in lockstep** with the Claude manifest — every version bump touches both.
+- `.codex-plugin/plugin.json`: name `forge`, description matching `.claude-plugin/plugin.json`, version **kept in lockstep** with the Claude manifest — every version bump touches both.
 - `.agents/plugins/marketplace.json`: local-source marketplace exposing this repo as the plugin root.
 - Test: manifest JSON validity + version equality across both plugin manifests (pytest, stdlib only).
 
@@ -37,7 +37,7 @@ Goal: theforge installable on Codex CLI from this repo, alongside Claude Code. S
 - Open mechanical item (plan-time verification, first task): whether Codex's plugin `hooks/hooks.json` schema and env-var (Claude uses `${CLAUDE_PLUGIN_ROOT}`) can coexist with the Claude schema in the same file.
   - Compatible → single shared `hooks/hooks.json`.
   - Collision → Codex wiring in a separate file (`hooks/codex-hooks.json` or documented `[hooks]` `config.toml` snippet); Claude file untouched.
-- Acceptance either way: hook fires on Codex in a repo containing `docs/theforge/`, emits the flow context; emits nothing elsewhere.
+- Acceptance either way: hook fires on Codex in a repo containing `docs/forge/`, emits the flow context; emits nothing elsewhere.
 
 ### 4. Harness-conditional execution
 - `skills/planning/SKILL.md` Execution section: add one branch line — Workflow tool unavailable → read `codex-execution.md` in the skill directory. No other Execution-section changes.
@@ -56,9 +56,13 @@ Goal: theforge installable on Codex CLI from this repo, alongside Claude Code. S
 
 - Existing pytest suite passes; new manifest test passes.
 - Claude Code behavior unchanged: plugin updates and loads, hook and skills work as before.
-- Codex: plugin installs from the local marketplace; skills discoverable; SessionStart hook emits flow context only in theforge-signal repos; after agent copy, all three tier agents spawnable by name with pinned model/effort and tier-prefixed nicknames.
+- Codex: plugin installs from the local marketplace; skills discoverable; SessionStart hook emits flow context only in forge-signal repos; after agent copy, all three tier agents spawnable by name with pinned model/effort and tier-prefixed nicknames.
 
 ## Risks / constraints
 
 - Codex subagent surface is young: selection regressed in CLI v0.137.0 (fixed), `.codex/agents` visibility from tool-backed sessions has open issues. codex-execution.md wording must not assume spawn reliability — acceptance-command verification catches silent inheritance of wrong model.
 - Model IDs will churn; mapping table is the single place to update.
+
+## Changelog
+
+2026-07-03: plugin renamed theforge → forge; manifest names, signal dir (docs/forge/, legacy accepted), and namespace refs updated throughout.

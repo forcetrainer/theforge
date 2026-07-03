@@ -58,13 +58,13 @@ elements for quick wireframes.
 scripts/start-server.sh --project-dir /path/to/project
 
 # Returns: {"type":"server-started","port":52341,"url":"http://localhost:52341",
-#           "screen_dir":".../.theforge/brainstorm/<session>/content",
-#           "state_dir":".../.theforge/brainstorm/<session>/state"}
+#           "screen_dir":".../.forge/brainstorm/<session>/content",
+#           "state_dir":".../.forge/brainstorm/<session>/state"}
 ```
 
 Save `screen_dir` from the response and tell the user to open the URL. With
-`--project-dir`, mockups persist in `.theforge/brainstorm/` (gitignored; the
-`.theforge/` directory also serves as the theforge session-hook opt-in signal).
+`--project-dir`, mockups persist in `.forge/brainstorm/` (gitignored; the
+`.forge/` directory also serves as the forge session-hook opt-in signal).
 Without it, files go to `/tmp` and are cleaned up. If you launched in the
 background and lost the startup JSON, read `state_dir/server-info`.
 

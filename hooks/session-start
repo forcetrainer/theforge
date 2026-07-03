@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# theforge SessionStart hook.
-# Injects a small flow reminder ONLY in repos that use the theforge flow
-# (docs/theforge/ or .theforge/ exists). Everywhere else: no output, zero tokens.
+# forge SessionStart hook.
+# Injects a small flow reminder ONLY in repos that use the forge flow
+# (docs/forge/ or .forge/ exists; legacy docs/theforge/ and .theforge/ also
+# accepted, with a rename nudge). Everywhere else: no output, zero tokens.
 # Discovery doesn't depend on this hook — skill descriptions handle that.
 
 set -euo pipefail
 
 # Signal check: walk from cwd to the git root (or filesystem root) looking for
-# docs/theforge/ or .theforge/. mkdir .theforge = manual opt-in.
+# the signal directory. mkdir .forge = manual opt-in.
 dir="$PWD"
 signal=""
+legacy=""
 while :; do
+    if [ -d "$dir/docs/forge" ] || [ -d "$dir/.forge" ]; then
+        signal="$dir"
+        break
+    fi
     if [ -d "$dir/docs/theforge" ] || [ -d "$dir/.theforge" ]; then
         signal="$dir"
+        legacy="$dir"
         break
     fi
     [ -d "$dir/.git" ] && break   # stop at repo root
@@ -24,7 +31,11 @@ done
 # No signal: emit nothing.
 [ -z "$signal" ] && exit 0
 
-context="This project uses the theforge flow: brainstorm -> spec (docs/theforge/specs/) -> plan (docs/theforge/plans/) -> TDD execution, with user approval gates between stages. Before feature work, read docs/theforge/DECISIONS.md (logged decisions are constraints) and check docs/theforge/ROADMAP.md for the current phase, if they exist. Log new decisions and deferrals per the theforge:project-memory skill."
+context="This project uses the forge flow: brainstorm -> spec (docs/forge/specs/) -> plan (docs/forge/plans/) -> TDD execution, with user approval gates between stages. Before feature work, read docs/forge/DECISIONS.md (logged decisions are constraints) and check docs/forge/ROADMAP.md for the current phase, if they exist. Log new decisions and deferrals per the forge:project-memory skill."
+
+if [ -n "$legacy" ]; then
+    context="This project uses the forge flow via the legacy docs/theforge/ (or .theforge/) signal directory: brainstorm -> spec -> plan -> TDD execution, with user approval gates between stages. Before feature work, read the DECISIONS.md in the legacy directory (logged decisions are constraints) and check its ROADMAP.md for the current phase, if they exist. Log new decisions and deferrals per the forge:project-memory skill. Migration nudge: suggest renaming once via git mv docs/theforge docs/forge (relative links inside the tree keep working; this hook accepts both names)."
+fi
 
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$context"
 exit 0

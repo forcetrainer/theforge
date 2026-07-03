@@ -1,11 +1,11 @@
 {
-  "name": "theforge",
+  "name": "forge",
   "interface": {
-    "displayName": "theforge"
+    "displayName": "forge"
   },
   "plugins": [
     {
-      "name": "theforge",
+      "name": "forge",
       "source": {
         "source": "local",
         "path": "./"

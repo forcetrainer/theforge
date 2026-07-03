@@ -9,7 +9,7 @@ Phase 1 of the 2026-07 upgrade cycle ([ideation doc](../ideas/2026-07-02-upgrade
 - Routing test: change creates new architecture → gear 3 (full flow below); operates within existing architecture → gear 2. Size is secondary: 10-line change adding a dependency → gear 3; 100-line change filling spec-implied behavior → gear 2.
 - Gear 1 (trivial/mechanical/content) = existing frontmatter don't-trigger list; unchanged.
 - Gear 2 path:
-  1. Name the owning spec in `docs/theforge/specs/`.
+  1. Name the owning spec in `docs/forge/specs/`.
   2. Present the design in conversation, one paragraph max.
   3. One approval gate.
   4. Hand off directly to the tdd skill — no spec file, no plan file, planning skill skipped.
@@ -20,7 +20,7 @@ Phase 1 of the 2026-07 upgrade cycle ([ideation doc](../ideas/2026-07-02-upgrade
 
 ### 1.2 Ideation handoff — step 1 addition
 
-- Docs in `docs/theforge/ideas/` (or a path handed at kickoff) = pre-answered clarification.
+- Docs in `docs/forge/ideas/` (or a path handed at kickoff) = pre-answered clarification.
 - Protocol: read; confirm understanding; flag DECISIONS conflicts; skip answered questions; go to approaches.
 - Applies only when an idea graduates to "building this"; free-form ideation stays unprocessed.
 
@@ -68,4 +68,4 @@ Phase 1 of the 2026-07 upgrade cycle ([ideation doc](../ideas/2026-07-02-upgrade
 ## 5. Release
 
 - README: flow description updated for gears, living specs, `ideas/` input.
-- `.claude-plugin/plugin.json` version bump; `claude plugin update theforge@theforge`; session restart to apply.
+- `.claude-plugin/plugin.json` version bump; `claude plugin update forge@forge`; session restart to apply.

@@ -1,4 +1,4 @@
-# theforge
+# forge
 
 A token-efficient development flow for Claude Code. Personal fork of
 [superpowers](https://github.com/obra/superpowers) v5.1.0, rebuilt for current
@@ -9,10 +9,10 @@ the token cost.
 
 **Brainstorm → spec → plan → implement**, with approval gates between each stage.
 The flow operates in three gears: trivial edits bypass it entirely; changes to an already-specified system take a lightweight conversational gate straight to TDD (gear 2); new architecture invokes the full brainstorm → spec → plan → execute sequence (gear 3).
-Brainstorming turns an idea into a user-reviewed spec (`docs/theforge/specs/`), drawing first-class input from `docs/theforge/ideas/` docs.
+Brainstorming turns an idea into a user-reviewed spec (`docs/forge/specs/`), drawing first-class input from `docs/forge/ideas/` docs.
 Specs are living documents: amendments are made in place and logged with a dated changelog entry.
 Planning turns the spec into a plan of *what and where* — files, interfaces, test
-cases, acceptance criteria, never implementation code (`docs/theforge/plans/`).
+cases, acceptance criteria, never implementation code (`docs/forge/plans/`).
 Execution runs task-by-task with strict TDD, inline for small plans or via a
 Workflow for large ones, with review proportional to risk. A project-memory layer
 (`ROADMAP.md`, `DECISIONS.md`, `DEFERRALS.md`) keeps durable context across
@@ -35,7 +35,7 @@ Two Python 3 CLI scripts generate orchestration artifacts: `scripts/extract-brie
 ## Hooks
 
 One conditional `SessionStart` hook: injects ~60 words of flow context, but only
-in repos that use the flow (`docs/theforge/` or `.theforge/` exists). Everywhere
+in repos that use the flow (`docs/forge/` or `.forge/` exists). Everywhere
 else it emits nothing. Skill discovery doesn't depend on it — frontmatter
 descriptions handle that in every session.
 
@@ -44,18 +44,18 @@ descriptions handle that in every session.
 ### Claude Code
 
 ```bash
-claude plugin marketplace add forcetrainer/theforge
-claude plugin install theforge@theforge
+claude plugin marketplace add forcetrainer/forge
+claude plugin install forge@forge
 ```
 
-To update later: `claude plugin update theforge@theforge` (or `git pull` in a
+To update later: `claude plugin update forge@forge` (or `git pull` in a
 local clone).
 
 ### Codex CLI
 
 ```bash
-codex plugin marketplace add /path/to/theforge
-codex plugin install theforge@theforge
+codex plugin marketplace add /path/to/forge
+codex plugin install forge@forge
 ```
 
 The `SessionStart` hook works on Codex with no extra wiring — the shared
@@ -82,7 +82,7 @@ the repo and must be synced manually.
   ([openai/codex#19197](https://github.com/openai/codex/issues/19197),
   [openai/codex#22779](https://github.com/openai/codex/issues/22779)).
   Sequential dispatch (`skills/planning/codex-execution.md`) is the mitigation;
-  theforge deliberately builds no cleanup machinery.
+  forge deliberately builds no cleanup machinery.
 
 ## Developing (editing skills)
 
@@ -90,7 +90,7 @@ On the machine where you edit the plugin, point the marketplace at your working
 copy instead of GitHub so edits are picked up locally:
 
 ```bash
-claude plugin marketplace add ~/development/theforge
+claude plugin marketplace add ~/development/forge
 ```
 
 The plugin cache only re-syncs on a **version bump**. After editing anything
@@ -99,14 +99,14 @@ under `skills/`, `agents/`, or `hooks/`:
 ```bash
 # 1. bump "version" in .claude-plugin/plugin.json
 # 2. then:
-claude plugin update theforge@theforge
+claude plugin update forge@forge
 # 3. restart the session to apply
 ```
 
 This repo dogfoods its own conventions: design decisions are logged in
-`docs/theforge/DECISIONS.md` (read it before changing skill behavior) and
-consciously-skipped work in `docs/theforge/DEFERRALS.md`. The presence of
-`docs/theforge/` also opts this repo into its own session hook.
+`docs/forge/DECISIONS.md` (read it before changing skill behavior) and
+consciously-skipped work in `docs/forge/DEFERRALS.md`. The presence of
+`docs/forge/` also opts this repo into its own session hook.
 
 ## What was cut from superpowers and why
 

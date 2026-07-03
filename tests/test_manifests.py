@@ -84,7 +84,7 @@ class CodexMarketplaceManifestShapeTests(unittest.TestCase):
         self.assertIn("plugins", self.manifest)
         self.assertTrue(len(self.manifest["plugins"]) >= 1)
         plugin = self.manifest["plugins"][0]
-        self.assertEqual(plugin["name"], "theforge")
+        self.assertEqual(plugin["name"], "forge")
         self.assertIn("source", plugin)
         self.assertEqual(plugin["source"]["source"], "local")
 

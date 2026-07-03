@@ -1,12 +1,12 @@
 {
-  "name": "theforge",
+  "name": "forge",
   "owner": {
     "name": "Bryan Inagaki",
     "email": "bryan@inagaki.us"
   },
   "plugins": [
     {
-      "name": "theforge",
+      "name": "forge",
       "source": "./",
       "description": "Token-efficient development flow: brainstorm → spec → plan → TDD execution, with project memory."
     }

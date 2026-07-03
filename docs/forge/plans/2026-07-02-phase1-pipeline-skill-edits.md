@@ -7,7 +7,7 @@
 **Architecture:** No structural change. Each task rewrites one skill file per its spec section; README/release last.
 **Tech stack:** Markdown skill files; `wc`/`grep` for acceptance.
 **Global Constraints:**
-- Spec: `docs/theforge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md` (section refs below).
+- Spec: `docs/forge/specs/2026-07-02-phase1-pipeline-skill-edits-design.md` (section refs below).
 - Frontmatter (`name`, `description`) of all three skills: byte-identical to current.
 - All added prose follows the spec §1.4 style contract (sentence test applies to the skill text itself).
 - No new files. No edits outside the file(s) each task names. Planning-skill Execution section untouched.
@@ -23,7 +23,7 @@
 
 **Content requirements (spec §):**
 - §1.1 `## Gear check` before Flow: architectural routing test with both size counter-examples; gear-2 five-step path (owning spec → one-paragraph design → one gate → tdd skill direct, no spec/plan file → in-place spec amendment + changelog line, DECISIONS only if genuinely decided); both tripwires verbatim in force (no owning spec → gear 3; design outgrows a paragraph → escalate).
-- §1.2 step 1 addition: `docs/theforge/ideas/` or kickoff-handed path = pre-answered clarification; read → confirm → flag DECISIONS conflicts → skip answered → approaches; only for ideas graduating to build.
+- §1.2 step 1 addition: `docs/forge/ideas/` or kickoff-handed path = pre-answered clarification; read → confirm → flag DECISIONS conflicts → skip answered → approaches; only for ideas graduating to build.
 - §1.3: step 3 batching (2–3 independent; single only on design forks); step 5 decision digests (chosen/forecloses/assumed); step 8 close-out wording, no mandatory re-review.
 - §1.4 step 6 additions: living-spec amendment rule; `## Changelog` format with dated one-line example; telegraphic style contract + sentence test + guard.
 
@@ -94,7 +94,7 @@
 - Modify: `README.md` (flow paragraph + skills table: gear routing, living specs, `ideas/` input)
 - Modify: `.claude-plugin/plugin.json` (version 0.2.2 → 0.3.0)
 
-**Content requirements:** README's "The flow" section mentions the three gears and living specs in ≤3 added/changed sentences; skills table descriptions stay one line each. After commit: `claude plugin update theforge@theforge` + session restart note to the user.
+**Content requirements:** README's "The flow" section mentions the three gears and living specs in ≤3 added/changed sentences; skills table descriptions stay one line each. After commit: `claude plugin update forge@forge` + session restart note to the user.
 
 **Tests:** none (docs-only; acceptance commands verify).
 

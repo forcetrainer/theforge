@@ -5,7 +5,7 @@
 
 **Goal:** Land the phase-2 execution-efficiency rules in the planning skill and agent files, and ship the two pipeline scripts with tests.
 
-**Architecture:** Planning skill carries orchestrator-facing rules; agent files carry reviewer-facing rules (split by actor, per DECISIONS 2026-07-02). Two self-contained Python stdlib CLI scripts do mechanical extraction: plan/spec → worker brief, task + git diff → review packet. Spec: `docs/theforge/specs/2026-07-02-phase2-execution-efficiency-design.md`.
+**Architecture:** Planning skill carries orchestrator-facing rules; agent files carry reviewer-facing rules (split by actor, per DECISIONS 2026-07-02). Two self-contained Python stdlib CLI scripts do mechanical extraction: plan/spec → worker brief, task + git diff → review packet. Spec: `docs/forge/specs/2026-07-02-phase2-execution-efficiency-design.md`.
 
 **Tech stack:** Markdown skills/agents; Python 3 stdlib (argparse, tempfile, subprocess, unittest); no third-party dependencies.
 
@@ -85,7 +85,7 @@
 - `--out` dir honored; default out dir is writable temp; path printed to stdout
 - last task in file (EOF-terminated block) extracts fully
 
-**Acceptance:** `python3 -m unittest tests.test_extract_brief -v` all pass; `python3 scripts/extract-brief.py docs/theforge/plans/2026-07-02-phase1-pipeline-skill-edits.md 1` prints a brief path whose file contains Task 1's block; same command with task number 99 exits nonzero.
+**Acceptance:** `python3 -m unittest tests.test_extract_brief -v` all pass; `python3 scripts/extract-brief.py docs/forge/plans/2026-07-02-phase1-pipeline-skill-edits.md 1` prints a brief path whose file contains Task 1's block; same command with task number 99 exits nonzero.
 
 **Tier:** standard
 
@@ -116,7 +116,7 @@
 - plan outside a git repo exits nonzero
 - `--out` honored; path printed to stdout
 
-**Acceptance:** `python3 -m unittest tests.test_review_packet -v` all pass; `python3 scripts/review-packet.py docs/theforge/plans/2026-07-02-phase1-pipeline-skill-edits.md 1 --base HEAD~1` prints a packet path whose file contains a diff section.
+**Acceptance:** `python3 -m unittest tests.test_review_packet -v` all pass; `python3 scripts/review-packet.py docs/forge/plans/2026-07-02-phase1-pipeline-skill-edits.md 1 --base HEAD~1` prints a packet path whose file contains a diff section.
 
 **Tier:** standard
 
