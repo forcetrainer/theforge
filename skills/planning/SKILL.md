@@ -87,11 +87,11 @@ Each task's tier routes to a shipped worker agent. Routing is absolute — the s
 
 Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") so tiers can be overridden before anything runs:
 
-`scripts/extract-brief.py` and `scripts/review-packet.py`, referenced throughout this section, live in this plugin's `scripts/` directory — that's a sibling of `skills/`, not a subdirectory of this skill. From this skill's own directory (see "Base directory for this skill" in the message that loaded it) that's `../../scripts/extract-brief.py` and `../../scripts/review-packet.py`. Don't conclude they're missing from a listing scoped to this skill's own directory — check the plugin root's `scripts/` folder.
-
 - **Workflow tool unavailable:** read `codex-execution.md` in this skill directory.
 - **Inline when accumulated context is an asset:** few tasks, and later tasks build on seeing earlier work's output. Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
 - **Dispatch otherwise — even for serial phases:** worker context is born, used, and discarded; inline context compounds forever. A Workflow script spawns one worker per task as the task's tier agent via `agentType` — its prompt carries the brief-file path (from `scripts/extract-brief.py`), relevant DECISIONS.md content, the deferral rule below, and TDD discipline — pipelined so independent tasks overlap and `Depends on` is respected. All trivial-tier tasks batch into a single `forge-light` dispatch, respecting `Depends on` among them. After each standard or complex task, **one combined review** by `forge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `forge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
+
+`scripts/extract-brief.py` and `scripts/review-packet.py` live at the plugin root (`../../scripts/` from this skill's base directory — see "Base directory for this skill" in the loading message), not in this skill's directory.
 
 **File-referenced briefs:** worker prompts carry a brief-file path plus the exact file paths the worker needs — never pasted plan or spec content. Generate the brief with `scripts/extract-brief.py`; its instructions bound the worker's reading explicitly: "read these N files and spec §X, nothing else."
 
