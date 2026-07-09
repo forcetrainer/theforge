@@ -73,7 +73,7 @@ No placeholders at this level: never "TBD", "handle edge cases", or "add validat
 
 ## Self-review
 
-Check the finished plan against the spec with fresh eyes: every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language; each tier holds in both directions — would a smaller model handle this cleanly, and does any "trivial" task hide a design decision? Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
+Check the finished plan against the spec with fresh eyes: every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language; each tier holds in both directions — would a smaller model handle this cleanly, and does any "trivial" task hide a design decision? Task headings are exactly `### Task N:` (grep `^### Task \d+:` and confirm the count matches the number of tasks) — `extract-brief.py` tolerates `##`, but `review-packet.py` requires `###` and fails silently on the wrong level, so this can't be caught by "it worked." Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
 
 ## Execution
 
