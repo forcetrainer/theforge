@@ -69,7 +69,7 @@ declarations only, no bodies. Later tasks must use these exact names.
 
 No placeholders at this level: never "TBD", "handle edge cases", or "add validation" — *name* the edge cases and the validation rules. The line is: name **what** to handle; don't write **how**.
 
-**Spec:** is optional — the spec sections this task's worker needs, named by heading text (unique prefix acceptable; matched case-insensitively at extraction time). Omit when the task needs no spec context. It drives mechanical brief extraction at execution (`scripts/extract-brief.py`).
+**Spec:** is optional — the spec sections this task's worker needs, named by heading text (unique prefix acceptable; matched case-insensitively at extraction time). Omit when the task needs no spec context. It drives mechanical brief extraction at execution (`scripts/extract-brief.py`). Keep it to a **single line of bare, comma-separated heading names** — no parentheticals, no `;`, no wrapping onto a second line, and one spec file per task (`--spec` takes one). The plan's `**Goal:**` is likewise a single non-empty line and is required. Wrapped or parenthetical `**Spec:**`/`**Goal:**` lines fail brief generation.
 
 **Tier** is judged by what the task demands, not its category: a mechanical edit with no design content is trivial; a well-specified change with a clear test path is standard; novel design, cross-file impact, or ambiguous spec territory is complex. A "code implementation" task that's really one field threaded through one call site is trivial, whatever its name. The tier drives model routing and review depth at execution. When interfaces and test cases are fully enumerated, prefer the lower tier — the worker has less to decide, not less to verify.
 

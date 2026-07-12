@@ -206,6 +206,51 @@ class ExtractBriefTests(unittest.TestCase):
         self.assertIn("## Task 1:", err)
         self.assertNotIn("not found", err)
 
+    # --- **Spec:**/**Goal:** must be single, well-formed lines (issue #9) ---
+
+    _TASK = "### Task 1: Do it\n- [ ] Done\n"
+
+    def _fail(self, name, body, argv_extra=None):
+        plan = self._write(name, body)
+        code, _, err = self._run([plan, "1", "--out", self.tmpdir.name] + (argv_extra or []))
+        self.assertNotEqual(code, 0, "expected nonzero exit; got clean brief")
+        self.assertTrue(err.strip())
+        return err
+
+    def test_wrapped_spec_line_fails_loud(self):
+        # Second-line heading name would be silently dropped by first-line parsing.
+        err = self._fail(
+            "wrapped_spec.md",
+            "**Goal:** Ship it.\n\n" + self._TASK + "\n**Spec:** Alpha, Beta,\nGamma\n",
+        )
+        self.assertIn("single line", err)
+        self.assertIn("Gamma", err)
+
+    def test_parenthetical_spec_fails_loud(self):
+        err = self._fail(
+            "paren_spec.md",
+            "**Goal:** Ship it.\n\n" + self._TASK + "\n**Spec:** Alpha (the repo, part)\n",
+        )
+        self.assertIn("parenthetical", err.lower())
+
+    def test_semicolon_spec_fails_loud(self):
+        err = self._fail(
+            "semi_spec.md",
+            "**Goal:** Ship it.\n\n" + self._TASK + "\n**Spec:** Alpha; Beta\n",
+        )
+        self.assertIn(";", err)
+
+    def test_wrapped_goal_line_fails_loud(self):
+        err = self._fail(
+            "wrapped_goal.md",
+            "**Goal:** Ship it, and also\nhandle the edge cases.\n\n" + self._TASK,
+        )
+        self.assertIn("single line", err)
+
+    def test_missing_goal_fails_loud(self):
+        err = self._fail("no_goal.md", self._TASK)
+        self.assertIn("Goal", err)
+
     def test_spec_declared_but_no_spec_flag_exits_nonzero(self):
         code, out, err = self._run([self.plan_with_spec, "1", "--out", self.tmpdir.name])
         self.assertNotEqual(code, 0)

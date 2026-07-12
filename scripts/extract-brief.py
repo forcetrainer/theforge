@@ -10,9 +10,14 @@ when absent), the full Task <N> block, and any spec sections named on the
 task's ``**Spec:**`` line. Prints the absolute output path to stdout.
 
 Exits nonzero with a message on stderr for any degraded-output condition:
-unreadable plan or spec, task number not found, task declares ``**Spec:**``
-but ``--spec`` was not given, or a named spec-section heading is unmatched
-or ambiguous. Never emits a silently thin brief.
+unreadable plan or spec, task number not found, missing/empty/wrapped
+``**Goal:**``, a ``**Spec:**`` that is wrapped across lines or carries a
+parenthetical or ``;``, task declares ``**Spec:**`` but ``--spec`` was not
+given, or a named spec-section heading is unmatched or ambiguous. Never emits
+a silently thin brief.
+
+``**Goal:**`` and ``**Spec:**`` are each a single line; ``**Spec:**`` is bare,
+comma-separated heading names only.
 
 Self-contained by design (Global Constraints: no shared module between
 scripts) — the task-block parser here is intentionally duplicated in
@@ -77,12 +82,39 @@ def diagnose_missing_task(lines, task_number, plan_path):
     return f"task {task_number} not found in {plan_path}"
 
 
+def is_wrapped_continuation(lines, idx):
+    """True if the line after ``idx`` is a wrapped continuation of a
+    single-line field. A blank line, a new ``**Field:**``, or a heading ends
+    the field legitimately; anything else is prose that wrapped onto a second
+    source line and would be silently dropped by first-line-only parsing.
+    """
+    nxt = idx + 1
+    if nxt >= len(lines):
+        return False
+    after = lines[nxt].strip()
+    if after == "" or after.startswith("**") or re.match(r'^#{1,6}\s', after):
+        return False
+    return True
+
+
 def extract_header(lines):
-    """Return (goal_line, global_constraints_block_or_None)."""
+    """Return (goal_line, global_constraints_block_or_None).
+
+    ``**Goal:**`` is a required header contract: raise if it is absent, empty,
+    or wrapped across two source lines — a silently truncated goal violates the
+    module's "never a silently thin brief" guarantee.
+    """
     goal_line = None
     gc_block = None
     for i, line in enumerate(lines):
         if goal_line is None and line.startswith("**Goal:**"):
+            if is_wrapped_continuation(lines, i):
+                raise RuntimeError(
+                    "**Goal:** must be a single line; found a wrapped "
+                    f"continuation: {lines[i + 1].strip()!r}"
+                )
+            if not line[len("**Goal:**"):].strip():
+                raise RuntimeError("**Goal:** is declared but empty")
             goal_line = line.rstrip("\n")
         if line.startswith("**Global Constraints:**"):
             block_lines = [line.rstrip("\n")]
@@ -93,14 +125,39 @@ def extract_header(lines):
             while block_lines and block_lines[-1].strip() == "":
                 block_lines.pop()
             gc_block = "\n".join(block_lines)
+    if goal_line is None:
+        raise RuntimeError("plan header is missing the required **Goal:** line")
     return goal_line, gc_block
 
 
 def parse_spec_names(task_block):
-    m = re.search(r'^\*\*Spec:\*\*\s*(.+)$', task_block, re.MULTILINE)
-    if not m:
+    """Parse a task's ``**Spec:**`` line into a list of heading names.
+
+    The line must be a single line of bare, comma-separated heading names.
+    Raise on a wrapped continuation, an empty declaration, or a parenthetical
+    or ';' — each of these otherwise mis-splits or truncates the section list
+    and yields a silently thin brief.
+    """
+    lines = task_block.splitlines()
+    idx = next((i for i, ln in enumerate(lines) if ln.startswith("**Spec:**")), None)
+    if idx is None:
         return []
-    return [name.strip() for name in m.group(1).split(",") if name.strip()]
+    if is_wrapped_continuation(lines, idx):
+        raise RuntimeError(
+            "**Spec:** must be a single line of comma-separated heading names; "
+            f"found a wrapped continuation: {lines[idx + 1].strip()!r}"
+        )
+    content = lines[idx][len("**Spec:**"):].strip()
+    if not content:
+        raise RuntimeError("**Spec:** is declared but names no spec sections")
+    for bad in ("(", ")", ";"):
+        if bad in content:
+            raise RuntimeError(
+                "**Spec:** takes bare comma-separated heading names — no "
+                f"parentheticals or ';' (use one --spec file); found {bad!r} "
+                f"in: {content!r}"
+            )
+    return [name.strip() for name in content.split(",") if name.strip()]
 
 
 def strip_heading_text(text):
