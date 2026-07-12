@@ -83,25 +83,34 @@ def read_lines(path):
 
 
 def extract_task_block(lines, task_number):
-    """Task block = '### Task <N>:' heading through next '###'/'##' heading or EOF.
+    """Task block = '### Task <N>:' heading through the next h1–h3 heading or
+    EOF (h4+ is intra-task structure; an h1 like '# Appendix' ends the block —
+    otherwise the brief silently swells with everything through EOF).
 
     Fenced lines are skipped for both the start match and the terminator — a
-    fenced example containing '## …' must not end the block early.
+    fenced example containing '## …' must not end the block early. A duplicate
+    '### Task <N>:' heading raises: silently picking one is a guess.
     """
     mask = fence_mask(lines)
-    start = None
-    for i, line in enumerate(lines):
-        if mask[i]:
-            continue
-        m = TASK_HEADING_RE.match(line)
-        if m and int(m.group(1)) == task_number:
-            start = i
-            break
-    if start is None:
+    starts = [
+        i
+        for i, line in enumerate(lines)
+        if not mask[i]
+        and (m := TASK_HEADING_RE.match(line))
+        and int(m.group(1)) == task_number
+    ]
+    if not starts:
         return None
+    if len(starts) > 1:
+        raise RuntimeError(
+            f"'### Task {task_number}:' appears more than once (lines "
+            + " and ".join(str(i + 1) for i in starts)
+            + ") — task numbers must be unique"
+        )
+    start = starts[0]
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        if not mask[j] and re.match(r'^#{2,3}\s', lines[j]):
+        if not mask[j] and re.match(r'^#{1,3}\s', lines[j]):
             end = j
             break
     return "".join(lines[start:end]).rstrip("\n")
@@ -154,11 +163,21 @@ def extract_header(lines):
     ``**Goal:**`` is a required header contract: raise if it is absent, empty,
     or wrapped across two source lines — a silently truncated goal violates the
     module's "never a silently thin brief" guarantee.
+
+    The header ends at the first task heading: a ``**Goal:**`` or
+    ``**Global Constraints:**`` line inside a task block is task content,
+    never a header field. A duplicate ``**Global Constraints:**`` raises —
+    silently letting one win is a guess.
     """
     mask = fence_mask(lines)
+    header_end = len(lines)
+    for i, line in enumerate(lines):
+        if not mask[i] and ANY_LEVEL_TASK_HEADING_RE.match(line):
+            header_end = i
+            break
     goal_line = None
     gc_block = None
-    for i, line in enumerate(lines):
+    for i, line in enumerate(lines[:header_end]):
         if mask[i]:
             continue
         if goal_line is None and line.startswith("**Goal:**"):
@@ -171,6 +190,11 @@ def extract_header(lines):
                 raise RuntimeError("**Goal:** is declared but empty")
             goal_line = line.rstrip("\n")
         if line.startswith("**Global Constraints:**"):
+            if gc_block is not None:
+                raise RuntimeError(
+                    "**Global Constraints:** appears more than once in the "
+                    "plan header"
+                )
             block_lines = [line.rstrip("\n")]
             j = i + 1
             while j < len(lines) and (

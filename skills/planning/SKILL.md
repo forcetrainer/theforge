@@ -41,7 +41,7 @@ Omit `**Global Constraints:**` entirely when the plan has none — never an empt
 
 ## Task structure
 
-Task headings are exactly `### Task N:` — three `#`, the number, a colon. The extraction scripts (`extract-brief.py`, `review-packet.py`) key on this literal form; a `## Task N:` at the wrong level fails brief generation.
+Task headings are exactly `### Task N:` — three `#`, the number, a colon; numbers are unique. The extraction scripts (`extract-brief.py`, `review-packet.py`) key on this literal form; a `## Task N:` at the wrong level or a duplicated number fails brief generation. A task block runs to the next h1–h3 heading (h4+ is intra-task structure); `**Goal:**`/`**Global Constraints:**` are header fields and live before the first task heading.
 
 ```markdown
 ### Task N: [Component]
