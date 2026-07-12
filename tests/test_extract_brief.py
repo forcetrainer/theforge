@@ -251,6 +251,124 @@ class ExtractBriefTests(unittest.TestCase):
         err = self._fail("no_goal.md", self._TASK)
         self.assertIn("Goal", err)
 
+    # --- parsers must be fence- and bold-prose-aware (issue #12) ---
+
+    def test_fenced_heading_does_not_terminate_task_block(self):
+        # A fenced markdown example containing '## ...' must not end the task
+        # block — truncating there emits a silently thin brief cut mid-fence.
+        plan = self._write(
+            "fenced_heading.md",
+            "**Goal:** Ship it.\n\n"
+            "### Task 1: Do it\n"
+            "Steps:\n\n"
+            "```markdown\n"
+            "## Example section the worker should produce\n"
+            "```\n\n"
+            "- Acceptance: tests pass\n\n"
+            "### Task 2: Other\nbody\n",
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("## Example section", content)
+        self.assertIn("Acceptance: tests pass", content)
+        self.assertNotIn("### Task 2", content)
+
+    def test_fenced_goal_line_is_ignored(self):
+        # A '**Goal:**' inside a fenced template example is content, not the
+        # header field — the real Goal after it must win.
+        plan = self._write(
+            "fenced_goal.md",
+            "Template example:\n\n"
+            "```markdown\n"
+            "**Goal:** EXAMPLE GOAL FROM TEMPLATE\n"
+            "```\n\n"
+            "**Goal:** The real goal.\n\n" + self._TASK,
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("**Goal:** The real goal.", content)
+        self.assertNotIn("EXAMPLE GOAL", content)
+
+    def test_fenced_spec_line_inside_task_is_ignored(self):
+        plan = self._write(
+            "fenced_spec.md",
+            "**Goal:** Ship it.\n\n"
+            "### Task 1: Do it\n"
+            "```markdown\n"
+            "**Spec:** Example Section\n"
+            "```\n",
+        )
+        # No real **Spec:** declared, so no --spec needed and no spec error.
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+
+    def test_wrapped_goal_starting_with_bold_fails_loud(self):
+        # Bold prose is not a new '**Field:**' — a wrapped continuation that
+        # happens to start with '**' must raise, not silently truncate.
+        err = self._fail(
+            "wrapped_goal_bold.md",
+            "**Goal:** Do the thing\n**quickly** and correctly.\n\n" + self._TASK,
+        )
+        self.assertIn("single line", err)
+        self.assertIn("quickly", err)
+
+    def test_gc_block_keeps_bold_prose_line(self):
+        # A constraints line beginning with bold prose belongs to the block;
+        # only a real '**Field:**' line or heading ends it.
+        plan = self._write(
+            "gc_bold.md",
+            "**Goal:** Ship it.\n\n"
+            "**Global Constraints:**\n"
+            "- constraint one\n"
+            "**bold start** of constraint two\n"
+            "- constraint three\n\n" + self._TASK,
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("constraint two", content)
+        self.assertIn("constraint three", content)
+
+    def test_gc_block_fenced_content_does_not_terminate(self):
+        plan = self._write(
+            "gc_fence.md",
+            "**Goal:** Ship it.\n\n"
+            "**Global Constraints:**\n"
+            "- constraint one\n"
+            "```\n"
+            "## fenced example\n"
+            "**Fenced:** field-looking line\n"
+            "```\n"
+            "- constraint two\n\n" + self._TASK,
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("constraint two", content)
+
+    def test_fenced_spec_heading_not_matched_as_section(self):
+        spec = self._write(
+            "spec_fenced.md",
+            "# Design Doc\n\n"
+            "## Real Section\n\n"
+            "Real details.\n\n"
+            "```markdown\n"
+            "## Real Section\n"
+            "```\n",
+        )
+        # Without fence awareness the fenced duplicate makes this ambiguous.
+        sections = extract_brief.find_spec_sections(
+            extract_brief.read_lines(spec), ["Real Section"]
+        )
+        self.assertEqual(len(sections), 1)
+        self.assertIn("Real details.", sections[0][1])
+
     def test_spec_declared_but_no_spec_flag_exits_nonzero(self):
         code, out, err = self._run([self.plan_with_spec, "1", "--out", self.tmpdir.name])
         self.assertNotEqual(code, 0)

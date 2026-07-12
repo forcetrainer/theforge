@@ -16,14 +16,47 @@ import sys
 import tempfile
 
 
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def fence_mask(lines):
+    """Per-line booleans: True when the line is fenced code (``` or ~~~,
+    delimiters included). Fenced lines are content, never structure —
+    duplicated from extract-brief.py by design (no shared module)."""
+    mask = [False] * len(lines)
+    fence_char = None
+    fence_len = 0
+    for i, line in enumerate(lines):
+        m = FENCE_RE.match(line)
+        if fence_char is None:
+            if m:
+                mask[i] = True
+                fence_char = m.group(1)[0]
+                fence_len = len(m.group(1))
+        else:
+            mask[i] = True
+            if (
+                m
+                and m.group(1)[0] == fence_char
+                and len(m.group(1)) >= fence_len
+                and line.strip() == m.group(1)
+            ):
+                fence_char = None
+    return mask
+
+
 def extract_task_block(text, task_number):
     """Return the ``### Task <task_number>:`` block (through the next
-    ``##``/``###`` heading or EOF), or None if the task isn't found."""
+    ``##``/``###`` heading or EOF), or None if the task isn't found.
+
+    Fenced lines are skipped for both the start match and the terminator — a
+    fenced example containing '## …' must not end the block early."""
     lines = text.splitlines(keepends=True)
+    mask = fence_mask(lines)
     start_pattern = re.compile(r"^###\s+Task\s+" + re.escape(str(task_number)) + r":")
     start_idx = None
     for i, line in enumerate(lines):
-        if start_pattern.match(line):
+        if not mask[i] and start_pattern.match(line):
             start_idx = i
             break
     if start_idx is None:
@@ -32,7 +65,7 @@ def extract_task_block(text, task_number):
     end_pattern = re.compile(r"^#{2,3}\s")
     end_idx = len(lines)
     for i in range(start_idx + 1, len(lines)):
-        if end_pattern.match(lines[i]):
+        if not mask[i] and end_pattern.match(lines[i]):
             end_idx = i
             break
     return "".join(lines[start_idx:end_idx])
