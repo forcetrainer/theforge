@@ -1,6 +1,10 @@
 # Deferrals
 
-## 2026-07-02 — Tier-down pipeline-depth experiment
+## 2026-07-11 — review-packet untracked-file handling
+**Why:** `git diff <base>` omits untracked files, so a dispatch-path task whose only output is new uncommitted files yields a packet honestly reporting `no changes vs <base>` (exit 0) — thin by workflow, not by parsing. The inline execution path commits per task; the dispatch path doesn't state it. Handling deferred to a docstring note in review-packet.py rather than code: detecting/including untracked files guesses at workflow state the script can't verify.
+**From:** parser-family audit after #8/#9 (issue #13)
+**Follow-up:** revisit-if-a-dispatch-run-produces-an-empty-packet-for-a-real-change; candidate fix is a stderr warning when `git status --porcelain` shows untracked files
+
 **Why:** The tier-down preference (fully enumerated interfaces + tests → lower tier) ships as two sentences in phase 2 without the proposed two-run A/B experiment; observed defects are taste-misses, which are tier-insensitive, and the review pass backstops real errors.
 **From:** docs/forge/ideas/2026-07-02-upgrade-cycle.md (§6 open question)
 **Follow-up:** revisit-when-phase-2-execution-shows-tier-related-defects

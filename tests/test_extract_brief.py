@@ -369,6 +369,90 @@ class ExtractBriefTests(unittest.TestCase):
         self.assertEqual(len(sections), 1)
         self.assertIn("Real details.", sections[0][1])
 
+    # --- header scope, h1 terminator, duplicate task numbers (issue #13) ---
+
+    def test_gc_line_inside_task_does_not_override_header(self):
+        # Header fields live before the first task heading; a
+        # '**Global Constraints:**' line inside a task block is task content,
+        # never a header override.
+        plan = self._write(
+            "gc_in_task.md",
+            "**Goal:** Ship it.\n\n"
+            "**Global Constraints:**\n"
+            "- real constraint\n\n"
+            "### Task 1: Do it\n"
+            "**Global Constraints:** bogus per-task line\n"
+            "body\n",
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        header = content.split("# Task 1")[0]
+        self.assertIn("real constraint", header)
+        self.assertNotIn("bogus per-task line", header)
+
+    def test_goal_inside_task_is_not_the_header_goal(self):
+        # No header Goal + a '**Goal:**' line inside a task must fail loud,
+        # not silently adopt the task's line as the plan goal.
+        err = self._fail(
+            "goal_in_task.md",
+            "### Task 1: Do it\n**Goal:** task-local goal\nbody\n",
+        )
+        self.assertIn("missing", err)
+
+    def test_duplicate_global_constraints_in_header_fails_loud(self):
+        err = self._fail(
+            "dup_gc.md",
+            "**Goal:** Ship it.\n\n"
+            "**Global Constraints:**\n- one\n\n"
+            "**Global Constraints:**\n- two\n\n" + self._TASK,
+        )
+        self.assertIn("Global Constraints", err)
+
+    def test_h1_heading_terminates_task_block(self):
+        # '# Appendix' after the last task must end the block — otherwise the
+        # brief silently swells with everything through EOF.
+        plan = self._write(
+            "h1_after_task.md",
+            "**Goal:** Ship it.\n\n"
+            "### Task 1: Do it\n"
+            "task body\n\n"
+            "# Appendix: unrelated dump\n"
+            "appendix line\n",
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("task body", content)
+        self.assertNotIn("appendix line", content)
+
+    def test_h4_heading_does_not_terminate_task_block(self):
+        plan = self._write(
+            "h4_in_task.md",
+            "**Goal:** Ship it.\n\n"
+            "### Task 1: Do it\n"
+            "task body\n\n"
+            "#### Sub-detail\n"
+            "sub-detail line\n",
+        )
+        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        self.assertEqual(code, 0, err)
+        with open(out.strip()) as f:
+            content = f.read()
+        self.assertIn("sub-detail line", content)
+
+    def test_duplicate_task_number_fails_loud(self):
+        err = self._fail(
+            "dup_task.md",
+            "**Goal:** Ship it.\n\n"
+            "### Task 1: First version\nold body\n\n"
+            "### Task 1: Second version\nnew body\n",
+        )
+        self.assertIn("Task 1", err)
+        self.assertNotIn("not found", err)
+
     def test_spec_declared_but_no_spec_flag_exits_nonzero(self):
         code, out, err = self._run([self.plan_with_spec, "1", "--out", self.tmpdir.name])
         self.assertNotEqual(code, 0)

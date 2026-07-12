@@ -179,6 +179,56 @@ class ReviewPacketGitFixtureTests(unittest.TestCase):
         self.assertIn("tail line after fence", content)
         self.assertNotIn("### Task 2", content)
 
+    # --- h1 terminator, duplicate task numbers, wrong-level diagnosis
+    # (issue #13; parity with extract-brief.py, duplicated by design) ---
+
+    def _write_plan(self, name, content):
+        path = os.path.join(self.repo_dir, name)
+        with open(path, "w") as f:
+            f.write(content)
+        self._git("add", ".")
+        self._git("commit", "-m", "add " + name)
+        return path
+
+    def test_h1_heading_terminates_task_block(self):
+        plan = self._write_plan(
+            "h1_plan.md",
+            "**Goal:** Ship it.\n\n### Task 1: Do it\ntask body\n\n"
+            "# Appendix: unrelated dump\nappendix line\n",
+        )
+        out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        result = run_script([plan, "1", "--base", "HEAD", "--out", out_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(result.stdout.strip()) as f:
+            content = f.read()
+        self.assertIn("task body", content)
+        self.assertNotIn("appendix line", content)
+
+    def test_duplicate_task_number_exits_nonzero(self):
+        plan = self._write_plan(
+            "dup_plan.md",
+            "### Task 1: First version\nold body\n\n"
+            "### Task 1: Second version\nnew body\n",
+        )
+        result = run_script([plan, "1", "--base", "HEAD"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Task 1", result.stderr)
+        self.assertNotIn("not found", result.stderr)
+
+    def test_wrong_level_task_heading_fails_loud_with_guidance(self):
+        # Same contract as extract-brief.py (#10): name the real cause, don't
+        # send the reader hunting with a generic "not found".
+        plan = self._write_plan(
+            "wrong_level_plan.md",
+            "**Goal:** Ship it.\n\n## Task 1: Do it\nbody\n",
+        )
+        result = run_script([plan, "1", "--base", "HEAD"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("### Task 1:", result.stderr)
+        self.assertIn("## Task 1:", result.stderr)
+        self.assertNotIn("not found", result.stderr)
+
     def test_out_dir_honored_and_path_printed(self):
         out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
         self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)

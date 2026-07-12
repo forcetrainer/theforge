@@ -7,6 +7,10 @@ Usage:
 
 Never emits a silently thin packet: any failure to locate the task block or
 to run git exits nonzero with a message on stderr.
+
+The diff is ``git diff <base>``: committed, staged, and unstaged *tracked*
+changes — untracked files are invisible to it. Commit (or at least ``git
+add``) the task's work before generating a packet.
 """
 import argparse
 import os
@@ -45,30 +49,65 @@ def fence_mask(lines):
     return mask
 
 
+# Lenient matcher used ONLY to diagnose a wrong-level heading (e.g. '## Task 1:')
+# after the strict match fails — never for extraction.
+ANY_LEVEL_TASK_HEADING_RE = re.compile(r"^(#{1,6})\s+Task\s+(\d+):")
+
+
 def extract_task_block(text, task_number):
-    """Return the ``### Task <task_number>:`` block (through the next
-    ``##``/``###`` heading or EOF), or None if the task isn't found.
+    """Return the ``### Task <task_number>:`` block (through the next h1–h3
+    heading or EOF; h4+ is intra-task structure), or None if the task isn't
+    found.
 
     Fenced lines are skipped for both the start match and the terminator — a
-    fenced example containing '## …' must not end the block early."""
+    fenced example containing '## …' must not end the block early. A duplicate
+    ``### Task <N>:`` heading raises ValueError: silently picking one is a
+    guess."""
     lines = text.splitlines(keepends=True)
     mask = fence_mask(lines)
     start_pattern = re.compile(r"^###\s+Task\s+" + re.escape(str(task_number)) + r":")
-    start_idx = None
-    for i, line in enumerate(lines):
-        if not mask[i] and start_pattern.match(line):
-            start_idx = i
-            break
-    if start_idx is None:
+    starts = [
+        i for i, line in enumerate(lines) if not mask[i] and start_pattern.match(line)
+    ]
+    if not starts:
         return None
+    if len(starts) > 1:
+        raise ValueError(
+            "'### Task {}:' appears more than once (lines {}) — task numbers "
+            "must be unique".format(
+                task_number, " and ".join(str(i + 1) for i in starts)
+            )
+        )
+    start_idx = starts[0]
 
-    end_pattern = re.compile(r"^#{2,3}\s")
+    end_pattern = re.compile(r"^#{1,3}\s")
     end_idx = len(lines)
     for i in range(start_idx + 1, len(lines)):
         if not mask[i] and end_pattern.match(lines[i]):
             end_idx = i
             break
     return "".join(lines[start_idx:end_idx])
+
+
+def diagnose_missing_task(text, task_number, plan_path):
+    """Explain why a strict '### Task N:' match failed — duplicated from
+    extract-brief.py by design (no shared module). If the heading exists at
+    the wrong level (e.g. '## Task 1:'), name the real cause and point at it;
+    otherwise fall back to the honest 'not found'."""
+    lines = text.splitlines(keepends=True)
+    mask = fence_mask(lines)
+    for i, line in enumerate(lines):
+        if mask[i]:
+            continue
+        m = ANY_LEVEL_TASK_HEADING_RE.match(line)
+        if m and int(m.group(2)) == task_number:
+            return (
+                "Task {n} heading must be '### Task {n}:' (three #), found "
+                "'{level} Task {n}:' at line {line} in {path}".format(
+                    n=task_number, level=m.group(1), line=i + 1, path=plan_path
+                )
+            )
+    return "Task {} not found in {}".format(task_number, plan_path)
 
 
 def build_packet(task_block, base, diff_output):
@@ -103,10 +142,15 @@ def main(argv=None):
         print("error: cannot read plan file {}: {}".format(args.plan, e), file=sys.stderr)
         return 1
 
-    task_block = extract_task_block(plan_text, args.task_number)
+    try:
+        task_block = extract_task_block(plan_text, args.task_number)
+    except ValueError as e:
+        print("error: {}".format(e), file=sys.stderr)
+        return 1
     if task_block is None:
         print(
-            "error: Task {} not found in {}".format(args.task_number, args.plan),
+            "error: "
+            + diagnose_missing_task(plan_text, args.task_number, args.plan),
             file=sys.stderr,
         )
         return 1
