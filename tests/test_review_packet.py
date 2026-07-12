@@ -152,6 +152,33 @@ class ReviewPacketGitFixtureTests(unittest.TestCase):
             run = len(stripped) - len(stripped.lstrip("`"))
             self.assertLess(run, len(fence), "diff body line closes the outer fence: %r" % line)
 
+    def test_fenced_heading_does_not_terminate_task_block(self):
+        # issue #12: a fenced markdown example containing '## ...' inside the
+        # task must not end the block — that emits a silently thin packet.
+        fenced_plan = os.path.join(self.repo_dir, "fenced_plan.md")
+        with open(fenced_plan, "w") as f:
+            f.write(
+                "**Goal:** Ship it.\n\n"
+                "### Task 1: Do it\n"
+                "```markdown\n"
+                "## Example section\n"
+                "```\n"
+                "tail line after fence\n\n"
+                "### Task 2: Other\nbody\n"
+            )
+        self._git("add", ".")
+        self._git("commit", "-m", "add fenced plan")
+
+        out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        result = run_script([fenced_plan, "1", "--base", "HEAD", "--out", out_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(result.stdout.strip()) as f:
+            content = f.read()
+        self.assertIn("## Example section", content)
+        self.assertIn("tail line after fence", content)
+        self.assertNotIn("### Task 2", content)
+
     def test_out_dir_honored_and_path_printed(self):
         out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
         self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)

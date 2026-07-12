@@ -19,6 +19,10 @@ a silently thin brief.
 ``**Goal:**`` and ``**Spec:**`` are each a single line; ``**Spec:**`` is bare,
 comma-separated heading names only.
 
+Fenced code blocks (``` or ~~~) are content, never structure: no heading,
+field, or task matcher fires on a fenced line, and a fenced ``## …`` never
+terminates a block.
+
 Self-contained by design (Global Constraints: no shared module between
 scripts) — the task-block parser here is intentionally duplicated in
 review-packet.py.
@@ -35,6 +39,39 @@ TASK_HEADING_RE = re.compile(r'^###\s+Task\s+(\d+):')
 # Lenient matcher used ONLY to diagnose a wrong-level heading (e.g. '## Task 1:')
 # after the strict match above fails — never for extraction.
 ANY_LEVEL_TASK_HEADING_RE = re.compile(r'^(#{1,6})\s+Task\s+(\d+):')
+# A new '**Field:**' line — distinct from bold prose like '**quickly** and…',
+# which is wrapped continuation, never a field. The name may itself contain
+# backticked bold (e.g. '**Note on `**Spec:**` lines below:**'), so the test
+# is ':**' anywhere after the opening '**', not a clean [^*]+ name.
+FIELD_LINE_RE = re.compile(r'^\*\*.*:\*\*')
+FENCE_RE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+
+
+def fence_mask(lines):
+    """Per-line booleans: True when the line is fenced code (``` or ~~~,
+    delimiters included). Fenced lines are content, never structure — no
+    heading, field, or task matcher may fire on them.
+    """
+    mask = [False] * len(lines)
+    fence_char = None
+    fence_len = 0
+    for i, line in enumerate(lines):
+        m = FENCE_RE.match(line)
+        if fence_char is None:
+            if m:
+                mask[i] = True
+                fence_char = m.group(1)[0]
+                fence_len = len(m.group(1))
+        else:
+            mask[i] = True
+            if (
+                m
+                and m.group(1)[0] == fence_char
+                and len(m.group(1)) >= fence_len
+                and line.strip() == m.group(1)
+            ):
+                fence_char = None
+    return mask
 
 
 def read_lines(path):
@@ -46,9 +83,16 @@ def read_lines(path):
 
 
 def extract_task_block(lines, task_number):
-    """Task block = '### Task <N>:' heading through next '###'/'##' heading or EOF."""
+    """Task block = '### Task <N>:' heading through next '###'/'##' heading or EOF.
+
+    Fenced lines are skipped for both the start match and the terminator — a
+    fenced example containing '## …' must not end the block early.
+    """
+    mask = fence_mask(lines)
     start = None
     for i, line in enumerate(lines):
+        if mask[i]:
+            continue
         m = TASK_HEADING_RE.match(line)
         if m and int(m.group(1)) == task_number:
             start = i
@@ -57,7 +101,7 @@ def extract_task_block(lines, task_number):
         return None
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        if re.match(r'^#{2,3}\s', lines[j]):
+        if not mask[j] and re.match(r'^#{2,3}\s', lines[j]):
             end = j
             break
     return "".join(lines[start:end]).rstrip("\n")
@@ -70,7 +114,10 @@ def diagnose_missing_task(lines, task_number, plan_path):
     real cause and point at it — the convention is exactly three '#'. Otherwise
     fall back to the honest 'not found'.
     """
+    mask = fence_mask(lines)
     for i, line in enumerate(lines):
+        if mask[i]:
+            continue
         m = ANY_LEVEL_TASK_HEADING_RE.match(line)
         if m and int(m.group(2)) == task_number:
             level = m.group(1)
@@ -82,17 +129,21 @@ def diagnose_missing_task(lines, task_number, plan_path):
     return f"task {task_number} not found in {plan_path}"
 
 
-def is_wrapped_continuation(lines, idx):
+def is_wrapped_continuation(lines, idx, mask=None):
     """True if the line after ``idx`` is a wrapped continuation of a
-    single-line field. A blank line, a new ``**Field:**``, or a heading ends
-    the field legitimately; anything else is prose that wrapped onto a second
-    source line and would be silently dropped by first-line-only parsing.
+    single-line field. A blank line, a new ``**Field:**``, a heading, or the
+    start of a fenced block ends the field legitimately; anything else —
+    including bold prose like ``**quickly** and…`` — is prose that wrapped
+    onto a second source line and would be silently dropped by
+    first-line-only parsing.
     """
     nxt = idx + 1
     if nxt >= len(lines):
         return False
+    if mask is not None and mask[nxt]:
+        return False
     after = lines[nxt].strip()
-    if after == "" or after.startswith("**") or re.match(r'^#{1,6}\s', after):
+    if after == "" or FIELD_LINE_RE.match(after) or re.match(r'^#{1,6}\s', after):
         return False
     return True
 
@@ -104,11 +155,14 @@ def extract_header(lines):
     or wrapped across two source lines — a silently truncated goal violates the
     module's "never a silently thin brief" guarantee.
     """
+    mask = fence_mask(lines)
     goal_line = None
     gc_block = None
     for i, line in enumerate(lines):
+        if mask[i]:
+            continue
         if goal_line is None and line.startswith("**Goal:**"):
-            if is_wrapped_continuation(lines, i):
+            if is_wrapped_continuation(lines, i, mask):
                 raise RuntimeError(
                     "**Goal:** must be a single line; found a wrapped "
                     f"continuation: {lines[i + 1].strip()!r}"
@@ -119,7 +173,13 @@ def extract_header(lines):
         if line.startswith("**Global Constraints:**"):
             block_lines = [line.rstrip("\n")]
             j = i + 1
-            while j < len(lines) and not re.match(r'^(#{1,6}\s|\*\*)', lines[j]):
+            while j < len(lines) and (
+                mask[j]
+                or not (
+                    re.match(r'^#{1,6}\s', lines[j])
+                    or FIELD_LINE_RE.match(lines[j])
+                )
+            ):
                 block_lines.append(lines[j].rstrip("\n"))
                 j += 1
             while block_lines and block_lines[-1].strip() == "":
@@ -139,10 +199,18 @@ def parse_spec_names(task_block):
     and yields a silently thin brief.
     """
     lines = task_block.splitlines()
-    idx = next((i for i, ln in enumerate(lines) if ln.startswith("**Spec:**")), None)
+    mask = fence_mask(lines)
+    idx = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if not mask[i] and ln.startswith("**Spec:**")
+        ),
+        None,
+    )
     if idx is None:
         return []
-    if is_wrapped_continuation(lines, idx):
+    if is_wrapped_continuation(lines, idx, mask):
         raise RuntimeError(
             "**Spec:** must be a single line of comma-separated heading names; "
             f"found a wrapped continuation: {lines[idx + 1].strip()!r}"
@@ -166,8 +234,11 @@ def strip_heading_text(text):
 
 
 def find_spec_sections(spec_lines, names):
+    mask = fence_mask(spec_lines)
     headings = []  # (level, raw_text, stripped_text, start_index)
     for i, line in enumerate(spec_lines):
+        if mask[i]:
+            continue
         m = HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
@@ -187,6 +258,8 @@ def find_spec_sections(spec_lines, names):
         level, raw_text, _, start = matches[0]
         end = len(spec_lines)
         for j in range(start + 1, len(spec_lines)):
+            if mask[j]:
+                continue
             hm = HEADING_RE.match(spec_lines[j])
             if hm and len(hm.group(1)) <= level:
                 end = j
