@@ -200,7 +200,7 @@ class ExtractBriefTests(unittest.TestCase):
             "plan_wrong_level.md",
             "**Goal:** Ship a widget.\n\n## Task 1: Build the widget\n- [ ] Done\n",
         )
-        code, out, err = self._run([plan, "1", "--out", self.tmpdir.name])
+        code, _, err = self._run([plan, "1", "--out", self.tmpdir.name])
         self.assertNotEqual(code, 0)
         self.assertIn("### Task 1:", err)
         self.assertIn("## Task 1:", err)
