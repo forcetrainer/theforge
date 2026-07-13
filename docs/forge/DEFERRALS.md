@@ -1,5 +1,10 @@
 # Deferrals
 
+## 2026-07-13 — Mechanical rework-cap enforcement on the Claude Code path
+**Why:** The Codex runner turns the 2-iteration rework cap into a loop counter; on Claude Code the cap remains prose in the planning skill, enforced by orchestrator discipline — the same enforcement gap observed on Codex (reviewer failures absorbed, process never halts) exists there in principle. Scoped out of the runner work at user direction: Codex-only for now.
+**From:** codex-exec-runner brainstorm (2026-07-13)
+**Follow-up:** revisit-when-a-claude-code-run-blows-through-the-rework-cap
+
 ## 2026-07-11 — review-packet untracked-file handling
 **Why:** `git diff <base>` omits untracked files, so a dispatch-path task whose only output is new uncommitted files yields a packet honestly reporting `no changes vs <base>` (exit 0) — thin by workflow, not by parsing. The inline execution path commits per task; the dispatch path doesn't state it. Handling deferred to a docstring note in review-packet.py rather than code: detecting/including untracked files guesses at workflow state the script can't verify.
 **From:** parser-family audit after #8/#9 (issue #13)
