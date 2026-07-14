@@ -164,6 +164,58 @@ PLAN_DUP = """# Fixture Plan
 
 MINIMAL_SPEC = "# Spec\n\nNothing referenced.\n"
 
+# A single standard-tier task: acceptance passes, so a reviewer is dispatched.
+PLAN_STD = """# Fixture Plan
+
+**Goal:** Do the thing.
+
+### Task 1: Standard task
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** standard
+
+**Depends on:** nothing
+"""
+
+# Standard task 1 (reviewed) followed by a trivial task 2 that depends on it —
+# used to prove a halt at task 1 never dispatches task 2.
+PLAN_STD_THEN_TRIVIAL = """# Fixture Plan
+
+**Goal:** Do the thing.
+
+### Task 1: Standard task
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** standard
+
+**Depends on:** nothing
+
+### Task 2: Trivial follow-up
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** trivial
+
+**Depends on:** Task 1
+"""
+
+# Two trivial tasks, task 2 depends on task 1 — used by the resume test where the
+# escalation is driven by a worker crash (no reviewer, so no git repo required).
+PLAN_TWO_TRIVIAL = PLAN_DEPS
+
+
+def _pass_msg():
+    return '{"verdict": "pass"}'
+
+
+def _findings_msg(*items):
+    return json.dumps({"verdict": "findings", "findings": list(items)})
+
 
 class ParsePlanTasksTests(unittest.TestCase):
     def _write(self, content):
@@ -411,9 +463,14 @@ class LoopSubprocessTests(unittest.TestCase):
         self.assertEqual(res.returncode, 2, res.stderr)
         with open(self.log) as f:
             log_lines = [ln for ln in f.read().splitlines() if ln.strip()]
-        # Exactly one worker dispatch — the failed dependency, never the dependent.
-        self.assertEqual(len(log_lines), 1, log_lines)
-        self.assertIn("task-1-worker-last", log_lines[0])
+        # Every worker dispatch is the failed dependency (task 1), never the
+        # dependent (task 2). A crashing worker consumes the rework cap, so task 1
+        # is dispatched more than once (initial + one rework) — the invariant under
+        # test is that task 2 is never reached, not the exact attempt count.
+        self.assertTrue(log_lines)
+        self.assertTrue(
+            all("task-1-worker-last" in ln for ln in log_lines), log_lines
+        )
         self.assertNotIn("task-2-worker-last", "\n".join(log_lines))
         # Task 2's worker last-message file is never created.
         self.assertFalse(
@@ -482,6 +539,394 @@ class LoopSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("contract source", res.stderr.lower())
+
+
+class ParseVerdictTests(unittest.TestCase):
+    """parse_verdict: last parseable JSON object matching the two verdict shapes
+    (fenced or bare); anything else raises naming the cause."""
+
+    def test_bare_pass(self):
+        v = forge_run.parse_verdict('{"verdict": "pass"}')
+        self.assertEqual(v.kind, "pass")
+
+    def test_findings_extracted_from_prose_and_fence(self):
+        msg = (
+            "Here is my review of the diff.\n\n"
+            "```json\n"
+            '{"verdict": "findings", "findings": ["a.py:3 - missing guard"]}\n'
+            "```\n\nThat is all.\n"
+        )
+        v = forge_run.parse_verdict(msg)
+        self.assertEqual(v.kind, "findings")
+        self.assertEqual(v.findings, ["a.py:3 - missing guard"])
+
+    def test_unparseable_prose_raises_naming_cause(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            forge_run.parse_verdict("Looks good to me, ship it.")
+        self.assertIn("verdict", str(ctx.exception).lower())
+
+    def test_malformed_json_raises(self):
+        with self.assertRaises(RuntimeError):
+            forge_run.parse_verdict('{"verdict": ')
+
+    def test_last_matching_object_wins(self):
+        msg = (
+            '{"verdict": "pass"}\n'
+            "on reflection...\n"
+            '{"verdict": "findings", "findings": ["x"]}'
+        )
+        v = forge_run.parse_verdict(msg)
+        self.assertEqual(v.kind, "findings")
+        self.assertEqual(v.findings, ["x"])
+
+
+def _log_argvs(log_path):
+    if not os.path.exists(log_path):
+        return []
+    with open(log_path) as f:
+        return [json.loads(ln) for ln in f if ln.strip()]
+
+
+def _find_dispatch(argvs, marker):
+    """Return the first argv (list) whose --output-last-message path contains
+    ``marker`` — distinguishes worker vs reviewer vs final-review calls."""
+    for a in argvs:
+        if "--output-last-message" in a:
+            path = a[a.index("--output-last-message") + 1]
+            if marker in path:
+                return a
+    return None
+
+
+class DispatchReviewerUnitTests(unittest.TestCase):
+    """dispatch_reviewer routes model/effort by REVIEW_MAP[tier] and returns the
+    parsed Verdict — exercised directly against the fake codex (no plan loop)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-rev-unit-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.packet = os.path.join(self.d, "packet.md")
+        with open(self.packet, "w") as f:
+            f.write("### Task 1: X\n\n```diff\n```\n")
+        self.log = os.path.join(self.d, "log")
+        self.resp = os.path.join(self.d, "resp.json")
+        with open(self.resp, "w") as f:
+            json.dump([{"exit": 0, "msg": '{"verdict": "pass"}'}], f)
+        self._set_env("FORGE_FAKE_LOG", self.log)
+        self._set_env("FORGE_FAKE_RESPONSES", self.resp)
+
+    def _set_env(self, key, value):
+        old = os.environ.get(key)
+        os.environ[key] = value
+        self.addCleanup(
+            lambda: os.environ.__setitem__(key, old)
+            if old is not None
+            else os.environ.pop(key, None)
+        )
+
+    def _argv_for(self, marker):
+        with open(self.log) as f:
+            for ln in f:
+                if not ln.strip():
+                    continue
+                a = json.loads(ln)
+                if "--output-last-message" in a:
+                    path = a[a.index("--output-last-message") + 1]
+                    if marker in path:
+                        return a
+        return None
+
+    def test_standard_reviewer_maps_terra_high(self):
+        run_dir = os.path.join(self.d, "run-s")
+        os.makedirs(run_dir)
+        task = forge_run.Task(number=1, title="t", tier="standard")
+        verdict = forge_run.dispatch_reviewer(task, self.packet, self.fake, run_dir)
+        self.assertEqual(verdict.kind, "pass")
+        argv = self._argv_for("task-1-review-last")
+        self.assertIsNotNone(argv)
+        self.assertIn("gpt-5.6-terra", argv)
+        self.assertIn("model_reasoning_effort=high", argv)
+        self.assertNotIn("ultra", " ".join(argv))
+
+    def test_complex_reviewer_maps_sol_high(self):
+        run_dir = os.path.join(self.d, "run-c")
+        os.makedirs(run_dir)
+        task = forge_run.Task(number=2, title="t", tier="complex")
+        verdict = forge_run.dispatch_reviewer(task, self.packet, self.fake, run_dir)
+        self.assertEqual(verdict.kind, "pass")
+        argv = self._argv_for("task-2-review-last")
+        self.assertIsNotNone(argv)
+        self.assertIn("gpt-5.6-sol", argv)
+        self.assertIn("model_reasoning_effort=high", argv)
+        self.assertNotIn("ultra", " ".join(argv))
+
+
+class ReviewLoopTests(unittest.TestCase):
+    """Standard/complex review + rework + halt + final review. These need a git
+    repo because the review packet is a ``git diff`` against the run baseline."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-review-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.spec = os.path.join(self.d, "spec.md")
+        with open(self.spec, "w") as f:
+            f.write(MINIMAL_SPEC)
+        self.run_dir = os.path.join(self.d, "run")
+        self.log = os.path.join(self.d, "fakelog")
+
+    def _git(self, *args):
+        subprocess.run(
+            ["git", *args], cwd=self.d, check=True, capture_output=True, text=True
+        )
+
+    def _init_repo(self):
+        self._git("init")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-m", "base")
+
+    def _plan(self, content, name="plan.md"):
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(content)
+        return p
+
+    def _run(self, plan_path, responses=None):
+        if os.path.exists(self.log):
+            os.remove(self.log)
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        if responses is not None:
+            resp_path = os.path.join(self.d, "responses.json")
+            with open(resp_path, "w") as f:
+                json.dump(responses, f)
+            env["FORGE_FAKE_RESPONSES"] = resp_path
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan_path,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+
+    def test_standard_dispatches_reviewer_with_mapped_model_and_passes(self):
+        plan = self._plan(PLAN_STD)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},           # worker
+            {"exit": 0, "msg": _pass_msg()},  # reviewer (clamps for final review)
+        ])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        rev = _find_dispatch(argvs, "task-1-review-last")
+        self.assertIsNotNone(rev, argvs)
+        self.assertIn("gpt-5.6-terra", rev)
+        self.assertIn("model_reasoning_effort=high", rev)
+        with open(os.path.join(self.run_dir, "task-1-attempt-1.json")) as f:
+            receipt = json.load(f)
+        self.assertEqual(receipt["status"], "passed")
+        self.assertEqual(receipt["review_verdict"], {"verdict": "pass"})
+
+    def test_findings_then_rework_carries_findings_text_in_worker_prompt(self):
+        plan = self._plan(PLAN_STD)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},                                  # worker a1
+            {"exit": 0, "msg": _findings_msg("GUARDXYZ needed at a.py:3")},  # review a1
+            {"exit": 0, "msg": ""},                                  # worker a2 (rework)
+            {"exit": 0, "msg": _pass_msg()},                         # review a2
+        ])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        # The rework worker's brief carries the finding text; the fake logs the
+        # full argv (prompt is the last arg), so the marker must appear there.
+        with open(self.log) as f:
+            self.assertIn("GUARDXYZ", f.read())
+
+    def test_second_findings_verdict_halts_escalated_and_stops_next_task(self):
+        plan = self._plan(PLAN_STD_THEN_TRIVIAL)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},                              # t1 worker a1
+            {"exit": 0, "msg": _findings_msg("a.py:1 - issue")}, # t1 review a1
+            {"exit": 0, "msg": ""},                              # t1 worker a2
+            {"exit": 0, "msg": _findings_msg("a.py:1 - still")}, # t1 review a2
+        ])
+        self.assertEqual(res.returncode, 2, res.stderr)
+        with open(os.path.join(self.run_dir, "task-1-attempt-2.json")) as f:
+            receipt = json.load(f)
+        self.assertEqual(receipt["status"], "escalated")
+        self.assertTrue(receipt["outstanding_findings"])
+        # Task 2 is never dispatched.
+        self.assertFalse(
+            os.path.exists(os.path.join(self.run_dir, "task-2-worker-last.txt"))
+        )
+        # Ledger annotated escalated on task 1.
+        with open(plan) as f:
+            content = f.read()
+        self.assertIn("escalated:", content)
+
+    def test_unparseable_reviewer_verdict_exits_one_naming_cause(self):
+        plan = self._plan(PLAN_STD)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},                       # worker
+            {"exit": 0, "msg": "looks good, no JSON"},    # reviewer: unparseable
+        ])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("verdict", res.stderr.lower())
+
+    def test_final_review_dispatched_sol_high_after_all_pass(self):
+        plan = self._plan(PLAN_PASS)  # trivial task: no per-task reviewer
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},           # trivial worker
+            {"exit": 0, "msg": _pass_msg()},  # final review
+        ])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        fr = _find_dispatch(argvs, "final-review-last")
+        self.assertIsNotNone(fr, argvs)
+        self.assertIn("gpt-5.6-sol", fr)
+        self.assertIn("model_reasoning_effort=high", fr)
+        # A trivial task never dispatches a per-task reviewer.
+        self.assertIsNone(_find_dispatch(argvs, "task-1-review-last"))
+
+    def test_final_review_findings_exit_two_status_escalated_final_review(self):
+        plan = self._plan(PLAN_PASS)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},                                   # worker
+            {"exit": 0, "msg": _findings_msg("spec drift at x")},     # final review
+        ])
+        self.assertEqual(res.returncode, 2, res.stderr)
+        with open(os.path.join(self.run_dir, "run.json")) as f:
+            summary = json.load(f)
+        self.assertEqual(summary["status"], "escalated-final-review")
+
+
+class ReviewNonGitTests(unittest.TestCase):
+    """Review-path behaviors that need no git repo: trivial tier skips the
+    reviewer entirely, and a worker crash consumes rework iterations without ever
+    reaching the reviewer."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-review-nogit-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.spec = os.path.join(self.d, "spec.md")
+        with open(self.spec, "w") as f:
+            f.write(MINIMAL_SPEC)
+        self.run_dir = os.path.join(self.d, "run")
+        self.log = os.path.join(self.d, "fakelog")
+
+    def _plan(self, content, name="plan.md"):
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(content)
+        return p
+
+    def _run(self, plan_path, responses=None):
+        if os.path.exists(self.log):
+            os.remove(self.log)
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        if responses is not None:
+            resp_path = os.path.join(self.d, "responses.json")
+            with open(resp_path, "w") as f:
+                json.dump(responses, f)
+            env["FORGE_FAKE_RESPONSES"] = resp_path
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan_path,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+
+    def test_trivial_tier_skips_reviewer_dispatch_entirely(self):
+        # Non-git cwd: no final review either, so the log must show no reviewer.
+        plan = self._plan(PLAN_PASS)
+        res = self._run(plan)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        self.assertIsNone(_find_dispatch(argvs, "review-last"), argvs)
+
+    def test_worker_crash_counts_as_failed_iteration_within_cap(self):
+        # Standard tier, but the worker crashes every attempt so the reviewer is
+        # never reached; two crashes hit the rework cap -> escalated, exit 2.
+        plan = self._plan(PLAN_STD)
+        res = self._run(plan, responses=[{"exit": 1, "msg": ""}])
+        self.assertEqual(res.returncode, 2, res.stderr)
+        argvs = _log_argvs(self.log)
+        self.assertIsNone(_find_dispatch(argvs, "task-1-review-last"), argvs)
+        with open(os.path.join(self.run_dir, "task-1-attempt-2.json")) as f:
+            receipt = json.load(f)
+        self.assertEqual(receipt["status"], "escalated")
+        self.assertEqual(receipt["worker_exit_code"], 1)
+
+
+class ResumeTests(unittest.TestCase):
+    """Re-invocation with an existing --run-dir skips tasks whose latest receipt
+    status is ``passed`` and resumes at the incomplete/escalated one. Trivial
+    tasks + worker-crash escalation keep this off the git path."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-resume-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.spec = os.path.join(self.d, "spec.md")
+        with open(self.spec, "w") as f:
+            f.write(MINIMAL_SPEC)
+        self.run_dir = os.path.join(self.d, "run")
+        self.log = os.path.join(self.d, "fakelog")
+
+    def _plan(self, content, name="plan.md"):
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(content)
+        return p
+
+    def _run(self, plan_path, responses):
+        # Fresh log every invocation so the fake's response index starts at 0 and
+        # the log reflects only this invocation's dispatches.
+        if os.path.exists(self.log):
+            os.remove(self.log)
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        resp_path = os.path.join(self.d, "responses.json")
+        with open(resp_path, "w") as f:
+            json.dump(responses, f)
+        env["FORGE_FAKE_RESPONSES"] = resp_path
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan_path,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+
+    def test_resume_skips_passed_tasks_and_resumes_at_escalated(self):
+        plan = self._plan(PLAN_TWO_TRIVIAL)  # task 2 depends on task 1
+        # Run 1: task 1 passes, task 2 crashes both attempts -> escalated, exit 2.
+        res1 = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},  # task 1 worker
+            {"exit": 1, "msg": ""},  # task 2 worker attempt 1
+            {"exit": 1, "msg": ""},  # task 2 worker attempt 2
+        ])
+        self.assertEqual(res1.returncode, 2, res1.stderr)
+        # Run 2 (same run-dir): task 1 is skipped (passed receipt); task 2 resumes
+        # and now passes.
+        res2 = self._run(plan, responses=[{"exit": 0, "msg": ""}])
+        self.assertEqual(res2.returncode, 0, res2.stderr)
+        joined = "\n".join(ln for ln in open(self.log).read().splitlines())
+        self.assertNotIn("task-1-worker-last", joined)  # task 1 not re-dispatched
+        self.assertIn("task-2-worker-last", joined)     # task 2 resumed
+        with open(os.path.join(self.run_dir, "run.json")) as f:
+            summary = json.load(f)
+        self.assertEqual(summary["status"], "passed")
+        with open(plan) as f:
+            content = f.read()
+        self.assertIn("[x] Done", content)
 
 
 if __name__ == "__main__":
