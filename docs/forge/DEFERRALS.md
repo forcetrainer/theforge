@@ -1,6 +1,10 @@
 # Deferrals
 
-## 2026-07-13 — Task 1: Live codex exec flag verification (environment constraint)
+## 2026-07-13 — forge-run.py re-dispatches the final review on re-invocation of a fully-passed run
+**Why:** Resume skips tasks whose receipt is `passed`, per the spec's Resume contract — but the plan-level final review has no receipt-skip, so re-invoking the runner over a run where everything already passed dispatches a fresh sol/high reviewer call. Cost observation from Task 3's escalation review, not a contract violation; re-invoking a fully-passed run is not a normal flow.
+**From:** codex-exec-runner plan, Task 3 escalation review
+**Follow-up:** revisit-if-re-invocation-of-passed-runs-becomes-a-real-flow; candidate fix is a final-review receipt honored on resume
+
 **Why:** Task 1 (`Live codex exec flag verification`) is an exploratory live-harness check requiring the Codex CLI binary to be available on PATH. Executed in Claude Code environment where codex is not available; the test is designed for and must run on a Codex CLI installation. Expected flags are documented in spec (2026-07-13-codex-exec-runner-design.md Tier mapping section: `-m/--model`, `-c model_reasoning_effort=`, `--output-last-message`); verification must occur on Codex before Task 2 (runner implementation) proceeds. No code changes required; findings are for spec validation only.
 **From:** codex-exec-runner plan, Task 1 execution on Claude Code (environment mismatch)
 **Follow-up:** when-codex-cli-is-available-for-live-verification; if-flags-diverge-amend-tier-mapping-table-in-spec-and-runner
