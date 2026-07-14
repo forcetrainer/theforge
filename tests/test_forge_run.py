@@ -32,7 +32,7 @@ _spec.loader.exec_module(forge_run)
 # index = prior log line count, clamped to last), writes msg to the
 # --output-last-message path, and exits with the scripted code.
 FAKE_CODEX_SRC = '''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 argv = sys.argv[1:]
 log = os.environ.get("FORGE_FAKE_LOG")
 idx = 0
@@ -44,6 +44,7 @@ if log:
         f.write(json.dumps(argv) + "\\n")
 exit_code = 0
 msg = ""
+sleep_s = 0
 resp = os.environ.get("FORGE_FAKE_RESPONSES")
 if resp and os.path.exists(resp):
     with open(resp) as f:
@@ -52,6 +53,9 @@ if resp and os.path.exists(resp):
         r = responses[idx] if idx < len(responses) else responses[-1]
         exit_code = r.get("exit", 0)
         msg = r.get("msg", "")
+        sleep_s = r.get("sleep", 0)
+if sleep_s:
+    time.sleep(sleep_s)
 if "--output-last-message" in argv:
     p = argv[argv.index("--output-last-message") + 1]
     with open(p, "w") as f:
@@ -1021,6 +1025,178 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(args[2], "/run/dir")
         self.assertEqual(args[3], "codex")
         self.assertEqual(args[4], os.getcwd())
+
+
+class ParseEffortOverridesTests(unittest.TestCase):
+    """parse_effort_overrides: repeatable --effort N=LEVEL entries -> {int: str}.
+    Malformed entries and disallowed levels (including 'ultra') raise naming the
+    cause; task-number existence is validated later, against the parsed plan."""
+
+    def test_parses_single_override(self):
+        overrides = forge_run.parse_effort_overrides(["3=max"])
+        self.assertEqual(overrides, {3: "max"})
+
+    def test_parses_multiple_overrides(self):
+        overrides = forge_run.parse_effort_overrides(["1=low", "2=xhigh"])
+        self.assertEqual(overrides, {1: "low", 2: "xhigh"})
+
+    def test_empty_or_none_yields_empty_dict(self):
+        self.assertEqual(forge_run.parse_effort_overrides([]), {})
+        self.assertEqual(forge_run.parse_effort_overrides(None), {})
+
+    def test_malformed_entry_raises_naming_cause(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            forge_run.parse_effort_overrides(["nope"])
+        self.assertIn("nope", str(ctx.exception))
+
+    def test_ultra_rejected_naming_cause(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            forge_run.parse_effort_overrides(["1=ultra"])
+        msg = str(ctx.exception)
+        self.assertIn("ultra", msg)
+
+    def test_unknown_level_rejected_naming_cause(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            forge_run.parse_effort_overrides(["1=bogus"])
+        self.assertIn("bogus", str(ctx.exception))
+
+
+class EffortOverrideCliTests(unittest.TestCase):
+    """CLI --effort N=LEVEL applies only to task N's worker dispatch."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-effort-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.spec = os.path.join(self.d, "spec.md")
+        with open(self.spec, "w") as f:
+            f.write(MINIMAL_SPEC)
+        self.run_dir = os.path.join(self.d, "run")
+        self.log = os.path.join(self.d, "fakelog")
+
+    def _plan(self, content, name="plan.md"):
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(content)
+        return p
+
+    def _run(self, plan_path, extra_args=(), responses=None):
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        if responses is not None:
+            resp_path = os.path.join(self.d, "responses.json")
+            with open(resp_path, "w") as f:
+                json.dump(responses, f)
+            env["FORGE_FAKE_RESPONSES"] = resp_path
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan_path,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake, *extra_args],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+
+    def test_override_changes_effort_for_only_that_task(self):
+        plan = self._plan(PLAN_DEPS)  # task 1 (trivial) then task 2 depends on it
+        res = self._run(plan, extra_args=["--effort", "1=max"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        t1 = _find_dispatch(argvs, "task-1-worker-last")
+        t2 = _find_dispatch(argvs, "task-2-worker-last")
+        self.assertIsNotNone(t1)
+        self.assertIsNotNone(t2)
+        self.assertIn("model_reasoning_effort=max", t1)
+        self.assertIn("model_reasoning_effort=medium", t2)  # trivial default, unaffected
+
+    def test_ultra_effort_rejected_cli_exits_one_naming_cause(self):
+        plan = self._plan(PLAN_PASS)
+        res = self._run(plan, extra_args=["--effort", "1=ultra"])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("ultra", res.stderr.lower())
+
+    def test_unknown_task_number_rejected_cli_exits_one_naming_cause(self):
+        plan = self._plan(PLAN_PASS)  # only task 1 exists
+        res = self._run(plan, extra_args=["--effort", "99=max"])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("99", res.stderr)
+
+
+class TimeoutTests(unittest.TestCase):
+    """--timeout SECONDS bounds worker and reviewer codex subprocess calls. A
+    worker timeout is a failed iteration (rework/escalation path); a reviewer
+    timeout is a contract error (loud exit 1, no receipt)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="forge-run-timeout-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.fake = write_fake_codex(self.d)
+        self.spec = os.path.join(self.d, "spec.md")
+        with open(self.spec, "w") as f:
+            f.write(MINIMAL_SPEC)
+        self.run_dir = os.path.join(self.d, "run")
+        self.log = os.path.join(self.d, "fakelog")
+
+    def _git(self, *args):
+        subprocess.run(
+            ["git", *args], cwd=self.d, check=True, capture_output=True, text=True
+        )
+
+    def _init_repo(self):
+        self._git("init")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-m", "base")
+
+    def _plan(self, content, name="plan.md"):
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(content)
+        return p
+
+    def _run(self, plan_path, extra_args=(), responses=None):
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        if responses is not None:
+            resp_path = os.path.join(self.d, "responses.json")
+            with open(resp_path, "w") as f:
+                json.dump(responses, f)
+            env["FORGE_FAKE_RESPONSES"] = resp_path
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan_path,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake, *extra_args],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+
+    def test_worker_timeout_counts_as_failed_iteration_then_escalates(self):
+        plan = self._plan(PLAN_PASS)  # trivial, no reviewer, no git repo needed
+        res = self._run(
+            plan,
+            extra_args=["--timeout", "0.2"],
+            responses=[{"exit": 0, "msg": "", "sleep": 2}],
+        )
+        self.assertEqual(res.returncode, 2, res.stderr)
+        with open(os.path.join(self.run_dir, "task-1-attempt-2.json")) as f:
+            receipt = json.load(f)
+        self.assertEqual(receipt["status"], "escalated")
+        self.assertTrue(
+            any("timed out" in f_ for f_ in receipt["outstanding_findings"])
+        )
+
+    def test_reviewer_timeout_exits_one_naming_cause(self):
+        plan = self._plan(PLAN_STD)  # standard tier -> reviewer dispatched
+        self._init_repo()
+        res = self._run(
+            plan,
+            extra_args=["--timeout", "0.2"],
+            responses=[
+                {"exit": 0, "msg": ""},              # worker: fast
+                {"exit": 0, "msg": _pass_msg(), "sleep": 2},  # reviewer: sleeps past timeout
+            ],
+        )
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("reviewer", res.stderr.lower())
+        self.assertIn("timed out", res.stderr.lower())
 
 
 if __name__ == "__main__":

@@ -80,6 +80,15 @@ _ACC_TAIL_CHARS = 2000
 # (DECISIONS 2026-07-13 — the prose cap proved unenforceable).
 MAX_ATTEMPTS = 2
 
+# Default subprocess timeout (seconds) for worker and reviewer `codex exec`
+# calls; overridable via --timeout. A hung worker/reviewer must not hang the
+# runner forever (final-review finding).
+DEFAULT_TIMEOUT = 3600
+
+# Allowed --effort override levels (per-task worker dispatch only). `ultra` is
+# deliberately excluded — it is prohibited at every tier (DECISIONS 2026-07-13).
+ALLOWED_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 # Reviewer verdict contract — the machine-readable half the runner parses. Kept
 # in the runner (not agents/*.md) because the JSON shape is a runner concern; the
 # reviewer's judgement rules live in the agents/*.md review paragraph (preamble).
@@ -114,6 +123,7 @@ class WorkerResult:
     exit_code: int
     last_message: str
     argv: list
+    timed_out: bool = False
 
 
 @dataclass
@@ -290,6 +300,35 @@ def order_tasks(tasks):
     return order
 
 
+_EFFORT_OVERRIDE_RE = re.compile(r"^(\d+)=(.+)$")
+
+
+def parse_effort_overrides(raw_list):
+    """Parse repeatable ``--effort N=LEVEL`` CLI entries into ``{task_number:
+    level}``. Malformed entries (not ``N=LEVEL``) or a level outside
+    ALLOWED_EFFORTS (including ``ultra``, which is prohibited at every tier)
+    raise RuntimeError naming the cause. Task-number existence against the plan
+    is validated separately by the caller, once the plan is parsed."""
+    overrides = {}
+    for item in raw_list or []:
+        m = _EFFORT_OVERRIDE_RE.match(item.strip())
+        if not m:
+            raise RuntimeError(
+                "--effort {!r} must be in the form N=LEVEL (task number and "
+                "one of {})".format(item, ", ".join(ALLOWED_EFFORTS))
+            )
+        number = int(m.group(1))
+        level = m.group(2).strip()
+        if level not in ALLOWED_EFFORTS:
+            raise RuntimeError(
+                "--effort {!r}: unknown level {!r} — expected one of {}".format(
+                    item, level, ", ".join(ALLOWED_EFFORTS)
+                )
+            )
+        overrides[number] = level
+    return overrides
+
+
 # --- worker dispatch --------------------------------------------------------
 
 
@@ -315,11 +354,17 @@ def contract_preamble(tier):
     return text.strip()
 
 
-def dispatch_worker(task, brief_path, codex_bin, run_dir):
-    """One ``codex exec`` worker process, tier-pinned model/effort. Prompt =
-    contract preamble + brief. Returns the exit code, last message, and the
-    exact argv emitted."""
+def dispatch_worker(task, brief_path, codex_bin, run_dir, effort_override=None,
+                     timeout=DEFAULT_TIMEOUT):
+    """One ``codex exec`` worker process, tier-pinned model/effort (``effort_
+    override`` replaces only the effort, never the model, for a per-task
+    ``--effort N=LEVEL`` bump). Prompt = contract preamble + brief. Returns the
+    exit code, last message, and the exact argv emitted. A hung process is
+    killed at ``timeout`` seconds and reported as ``timed_out=True`` — the
+    caller treats that exactly like a failed iteration, never hangs the run."""
     model, effort = TIER_MAP[task.tier]
+    if effort_override is not None:
+        effort = effort_override
     preamble = contract_preamble(task.tier)
     with open(brief_path, "r", encoding="utf-8") as f:
         brief = f.read()
@@ -336,7 +381,10 @@ def dispatch_worker(task, brief_path, codex_bin, run_dir):
         last_msg_path,
         prompt,
     ]
-    proc = subprocess.run(argv, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return WorkerResult(exit_code=None, last_message="", argv=argv, timed_out=True)
     last_message = ""
     if os.path.exists(last_msg_path):
         with open(last_msg_path, "r", encoding="utf-8") as f:
@@ -416,15 +464,18 @@ def verdict_to_dict(verdict):
     return {"verdict": "findings", "findings": list(verdict.findings)}
 
 
-def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_msg_path):
+def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_msg_path,
+                           timeout=DEFAULT_TIMEOUT):
     """Shared plumbing for per-task and final reviewers: one ``codex exec`` call,
     prompt = review preamble + verdict instruction + packet; returns the parsed
-    Verdict. Fail-loud on a crashed reviewer or an unparseable verdict — never
-    silently trusts or reuses stale output (Halt spec; ``parse_verdict`` never
-    retries silently). The last-message file is cleared before the call so a prior
-    attempt's verdict can never be re-read, and the reviewer's own exit code is
-    checked (unlike a worker crash, a reviewer crash yields no verdict to judge, so
-    it halts the run rather than consuming a rework iteration)."""
+    Verdict. Fail-loud on a crashed reviewer, a timed-out reviewer, or an
+    unparseable verdict — never silently trusts or reuses stale output (Halt
+    spec; ``parse_verdict`` never retries silently). The last-message file is
+    cleared before the call so a prior attempt's verdict can never be re-read,
+    and the reviewer's own exit code is checked (unlike a worker crash, a
+    reviewer crash yields no verdict to judge, so it halts the run rather than
+    consuming a rework iteration). A reviewer that hangs past ``timeout`` is
+    handled the same way — it also yields no verdict to judge."""
     with open(packet_path, "r", encoding="utf-8") as f:
         packet = f.read()
     prompt = preamble + "\n\n" + REVIEW_VERDICT_INSTRUCTION + "\n\n" + packet
@@ -441,7 +492,13 @@ def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_
     ]
     if os.path.exists(last_msg_path):
         os.remove(last_msg_path)  # never re-read a prior attempt's message
-    proc = subprocess.run(argv, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "reviewer process ({} at effort {}) timed out after {}s without a "
+            "usable verdict".format(model, effort, timeout)
+        )
     if proc.returncode != 0:
         stderr_tail = (proc.stderr or "").strip()[:300]
         raise RuntimeError(
@@ -460,7 +517,7 @@ def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_
     return parse_verdict(last_message)
 
 
-def dispatch_reviewer(task, packet_path, codex_bin, run_dir):
+def dispatch_reviewer(task, packet_path, codex_bin, run_dir, timeout=DEFAULT_TIMEOUT):
     """Per-task reviewer via ``codex exec`` routed by REVIEW_MAP[tier] (standard ->
     terra/high, complex -> sol/high). Preamble = the tier agent's review paragraph.
     Returns the parsed Verdict."""
@@ -468,11 +525,11 @@ def dispatch_reviewer(task, packet_path, codex_bin, run_dir):
     preamble = contract_preamble(task.tier)
     last_msg_path = os.path.join(run_dir, "task-{}-review-last.txt".format(task.number))
     return _dispatch_review_call(
-        model, effort, preamble, packet_path, codex_bin, last_msg_path
+        model, effort, preamble, packet_path, codex_bin, last_msg_path, timeout=timeout
     )
 
 
-def dispatch_final_review(packet_path, codex_bin, run_dir):
+def dispatch_final_review(packet_path, codex_bin, run_dir, timeout=DEFAULT_TIMEOUT):
     """Whole-plan final review: one sol/high ``codex exec`` call (REVIEW_MAP[
     'complex']) with the forge-deep final-integration-review preamble against the
     whole-plan diff + spec. Returns the parsed Verdict."""
@@ -480,7 +537,7 @@ def dispatch_final_review(packet_path, codex_bin, run_dir):
     preamble = contract_preamble("complex")
     last_msg_path = os.path.join(run_dir, "final-review-last.txt")
     return _dispatch_review_call(
-        model, effort, preamble, packet_path, codex_bin, last_msg_path
+        model, effort, preamble, packet_path, codex_bin, last_msg_path, timeout=timeout
     )
 
 
@@ -704,14 +761,19 @@ def _brief_for(task, plan_path, spec_path, run_dir, attempt, findings):
     return brief_path, sha
 
 
-def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd):
+def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd,
+                  effort_override=None, timeout=DEFAULT_TIMEOUT):
     """Run one task through the rework loop: worker -> acceptance -> (standard/
-    complex) reviewer, capped at MAX_ATTEMPTS. A worker crash, a failed acceptance
-    command, or a findings verdict is a failed iteration; the next iteration
-    re-dispatches the worker with the outstanding findings appended to the brief.
-    Hitting the cap yields status ``escalated`` with the outstanding findings on
-    the final receipt."""
+    complex) reviewer, capped at MAX_ATTEMPTS. A worker crash, a worker timeout,
+    a failed acceptance command, or a findings verdict is a failed iteration;
+    the next iteration re-dispatches the worker with the outstanding findings
+    appended to the brief. Hitting the cap yields status ``escalated`` with the
+    outstanding findings on the final receipt. ``effort_override`` (from a
+    per-task ``--effort N=LEVEL`` CLI flag) replaces only this task's worker
+    effort, never the reviewer's."""
     model, effort = TIER_MAP[task.tier]
+    if effort_override is not None:
+        effort = effort_override
     # Snapshot the working tree before this task runs — the per-task review base.
     # HEAD does not advance between tasks (nothing commits), so a HEAD base would
     # include prior tasks' uncommitted changes; the snapshot isolates `git diff`
@@ -725,17 +787,26 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd):
         brief_path, brief_sha = _brief_for(
             task, plan_path, spec_path, run_dir, attempt, findings_carry
         )
-        worker = dispatch_worker(task, brief_path, codex_bin, run_dir)
+        worker = dispatch_worker(
+            task, brief_path, codex_bin, run_dir,
+            effort_override=effort_override, timeout=timeout,
+        )
         acceptance = run_acceptance(task, cwd)
 
-        worker_ok = worker.exit_code == 0
+        worker_ok = worker.exit_code == 0 and not worker.timed_out
         acc_ok = all(r.exit_code == 0 for r in acceptance)
 
         review_verdict = None
         iteration_findings = []
         failure_summary = None
 
-        if not worker_ok:
+        if worker.timed_out:
+            failure_summary = "worker timed out after {}s".format(timeout)
+            iteration_findings = [
+                "Prior worker attempt timed out after {}s with no usable "
+                "result — reattempt the task.".format(timeout)
+            ]
+        elif not worker_ok:
             failure_summary = "worker exited {}".format(worker.exit_code)
             iteration_findings = [
                 "Prior worker attempt exited {} with no usable result — "
@@ -758,7 +829,7 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd):
                     "repository".format(task.number)
                 )
             packet_path = _packet_for(task, plan_path, run_dir, review_base, cwd)
-            verdict = dispatch_reviewer(task, packet_path, codex_bin, run_dir)
+            verdict = dispatch_reviewer(task, packet_path, codex_bin, run_dir, timeout=timeout)
             review_verdict = verdict_to_dict(verdict)
             if verdict.kind == "findings":
                 iteration_findings = list(verdict.findings)
@@ -803,15 +874,30 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd):
         findings_carry = iteration_findings  # rework: carry into the next brief
 
 
-def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
+def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=None,
+             timeout=DEFAULT_TIMEOUT):
     """Sequential whole-plan loop. Tasks already ``passed`` in this run-dir (a
     resume) are skipped; the rest run through execute_task in dependency order.
     Halts on the first escalation. After every task passes, one plan-level final
-    review runs against the whole-plan diff + spec (git repo required)."""
+    review runs against the whole-plan diff + spec (git repo required).
+    ``effort_overrides`` (``{task_number: level}``, from repeatable ``--effort
+    N=LEVEL``) must reference only task numbers present in the plan — an
+    unknown number raises naming the cause. ``timeout`` bounds every worker and
+    reviewer ``codex exec`` call."""
     os.makedirs(run_dir, exist_ok=True)
     ensure_forge_gitignore(cwd)
     tasks = parse_plan_tasks(plan_path)
     order = order_tasks(tasks)
+    effort_overrides = effort_overrides or {}
+    unknown = sorted(set(effort_overrides) - {t.number for t in tasks})
+    if unknown:
+        raise RuntimeError(
+            "--effort references unknown task number(s) {} — plan has task(s) "
+            "{}".format(
+                ", ".join(str(n) for n in unknown),
+                ", ".join(str(t.number) for t in tasks),
+            )
+        )
     run_base = _git_head(cwd)  # whole-plan diff base for the final review
 
     task_summaries = []
@@ -837,7 +923,10 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
             continue
 
         _clear_task_receipts(run_dir, task.number)
-        outcome = execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd)
+        outcome = execute_task(
+            task, plan_path, spec_path, run_dir, codex_bin, cwd,
+            effort_override=effort_overrides.get(task.number), timeout=timeout,
+        )
         task_summaries.append(
             {
                 "number": task.number,
@@ -864,7 +953,7 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
         diff = _git_diff(cwd, run_base)
         if diff.strip():
             packet_path = _final_packet(spec_path, run_base, diff, run_dir)
-            verdict = dispatch_final_review(packet_path, codex_bin, run_dir)
+            verdict = dispatch_final_review(packet_path, codex_bin, run_dir, timeout=timeout)
             write_final_review_receipt(run_dir, verdict)
             if verdict.kind == "findings":
                 overall = "escalated-final-review"
@@ -905,11 +994,31 @@ def main(argv=None):
         default="codex",
         help="path to the codex executable (test seam; default: codex on PATH)",
     )
+    parser.add_argument(
+        "--effort",
+        action="append",
+        default=[],
+        metavar="N=LEVEL",
+        help="per-task worker reasoning-effort override (repeatable); LEVEL in "
+        "{}; applies to that task's worker dispatch only, never the "
+        "reviewer".format(", ".join(ALLOWED_EFFORTS)),
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="seconds before a worker/reviewer codex subprocess is killed "
+        "(default: {})".format(DEFAULT_TIMEOUT),
+    )
     args = parser.parse_args(argv)
 
     run_dir = args.run_dir or _default_run_dir()
     try:
-        return run_plan(args.plan, args.spec, run_dir, args.codex_bin, os.getcwd())
+        effort_overrides = parse_effort_overrides(args.effort)
+        return run_plan(
+            args.plan, args.spec, run_dir, args.codex_bin, os.getcwd(),
+            effort_overrides=effort_overrides, timeout=args.timeout,
+        )
     except RuntimeError as e:
         print("error: {}".format(e), file=sys.stderr)
         return 1

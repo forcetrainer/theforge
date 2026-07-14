@@ -5,7 +5,7 @@ Goal: Codex plan execution moves from in-session subagent dispatch to a determin
 ## Runner
 
 - `scripts/forge-run.py`, Python stdlib only. Reuses `extract-brief.py` and `review-packet.py` (import or subprocess) — plan/spec parsing contracts unchanged, no duplicated parsing.
-- Invocation: `forge-run.py <plan.md> --spec <spec.md>`, run by the conversational Codex orchestrator after the execution approval gate.
+- Invocation: `forge-run.py <plan.md> --spec <spec.md> [--effort N=LEVEL ...] [--timeout SECONDS]`, run by the conversational Codex orchestrator after the execution approval gate. `--effort N=LEVEL` (repeatable; LEVEL in `low`/`medium`/`high`/`xhigh`/`max`) overrides task N's worker reasoning effort only — never the reviewer's; `ultra` and unknown task numbers are rejected loudly. `--timeout SECONDS` (default 3600) bounds every worker and reviewer `codex exec` subprocess call.
 - Sequential: one worker at a time, `Depends on` order. No pipelining, no worktree isolation.
 - Whole-plan scope: runner owns the task loop, review dispatch, rework iterations, receipts, and ledger annotations. The conversational orchestrator only invokes the runner, relays escalations, and holds the human gates.
 
@@ -84,3 +84,4 @@ Goal: Codex plan execution moves from in-session subagent dispatch to a determin
 2026-07-13: `.forge/` ignore is runner-written (self-ignoring `.gitignore`), not target-repo setup — requirement was unowned by any plan task (Task 2 escalation).
 2026-07-13: receipts gain outstanding_findings on escalation (Task 3).
 2026-07-14: Halt section split into two classes — exit 2 task escalation (receipt) vs exit 1 contract error (stderr, no receipt); docs follow code (Task 5 escalation).
+2026-07-14: CLI gains --effort N=LEVEL (per-task worker override; ultra rejected) and --timeout SECONDS (default 3600; worker timeout = failed iteration, reviewer timeout = contract error) — final-review findings.
