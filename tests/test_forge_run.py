@@ -388,6 +388,24 @@ class LoopSubprocessTests(unittest.TestCase):
         self.assertNotEqual(pos2, -1)
         self.assertLess(pos1, pos2)
 
+    def test_dependency_failure_halts_before_dependent_dispatched(self):
+        # Task 1 (the dependency) fails; Task 2 depends on it and must never be
+        # dispatched. Guards run_plan's break-on-escalation: a refactor that kept
+        # looping would dispatch the dependent, and this test would catch it.
+        plan = self._plan(PLAN_DEPS)
+        res = self._run(plan, responses=[{"exit": 1, "msg": ""}])
+        self.assertEqual(res.returncode, 2, res.stderr)
+        with open(self.log) as f:
+            log_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+        # Exactly one worker dispatch — the failed dependency, never the dependent.
+        self.assertEqual(len(log_lines), 1, log_lines)
+        self.assertIn("task-1-worker-last", log_lines[0])
+        self.assertNotIn("task-2-worker-last", "\n".join(log_lines))
+        # Task 2's worker last-message file is never created.
+        self.assertFalse(
+            os.path.exists(os.path.join(self.run_dir, "task-2-worker-last.txt"))
+        )
+
     def test_worker_nonzero_exit_marks_attempt_failed_and_halts(self):
         plan = self._plan(PLAN_PASS)
         res = self._run(plan, responses=[{"exit": 1, "msg": ""}])
@@ -419,6 +437,24 @@ class LoopSubprocessTests(unittest.TestCase):
         res = self._run(plan)
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("duplicate", res.stderr.lower())
+
+    def test_missing_contract_source_cli_exits_one_naming_cause(self):
+        # Spec Tests bullet: "missing agents/*.md contract source exits 1" —
+        # driven through the CLI (not just the unit-level dispatch_worker raise).
+        plan = self._plan(PLAN_PASS)
+        empty = os.path.join(self.d, "no-agents")
+        os.makedirs(empty, exist_ok=True)
+        env = os.environ.copy()
+        env["FORGE_FAKE_LOG"] = self.log
+        env["FORGE_AGENTS_DIR"] = empty
+        res = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), plan,
+             "--spec", self.spec, "--run-dir", self.run_dir,
+             "--codex-bin", self.fake],
+            cwd=self.d, capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("contract source", res.stderr.lower())
 
 
 if __name__ == "__main__":

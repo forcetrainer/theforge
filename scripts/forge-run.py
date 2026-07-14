@@ -72,7 +72,6 @@ class Task:
     depends_on: list = field(default_factory=list)
     acceptance_commands: list = field(default_factory=list)
     checkbox_line: int = -1
-    block: str = ""
 
 
 @dataclass
@@ -221,7 +220,6 @@ def parse_plan_tasks(plan_path):
                 depends_on=depends_on,
                 acceptance_commands=acceptance,
                 checkbox_line=checkbox_line,
-                block=block,
             )
         )
     return tasks
@@ -432,15 +430,13 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
     tasks = parse_plan_tasks(plan_path)
     order = order_tasks(tasks)
 
-    passed = set()
     task_summaries = []
     overall = "passed"
 
+    # order_tasks yields dependency order (each dependency before its dependents)
+    # and the loop breaks on the first escalation, so a dependent is never reached
+    # unless every dependency already passed — no separate depends-on guard needed.
     for task in order:
-        if not all(d in passed for d in task.depends_on):
-            # A dependency did not pass — do not dispatch a dependent.
-            overall = "escalated"
-            break
         outcome = execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd)
         task_summaries.append(
             {
@@ -452,7 +448,6 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
             }
         )
         if outcome.status == "passed":
-            passed.add(task.number)
             annotate_ledger(
                 plan_path, task, "passed, {} attempt(s)".format(outcome.attempts)
             )
