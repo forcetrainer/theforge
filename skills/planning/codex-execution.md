@@ -26,18 +26,32 @@ work inline. If a `codex exec` call inside the runner fails or halts, the
 fix is a human decision and a re-invocation — not the orchestrator editing
 source files or reasoning through the fix itself.
 
-**Halt / escalation:** the runner halts mechanically — never a judgment
-call — at the rework cap (2 iterations: initial attempt + 1 rework), on an
-unparseable reviewer verdict, and on brief/review-packet generation errors
-(existing fail-loud contracts). On halt it writes a receipt with the
-outstanding findings, exits non-zero, and starts no further tasks. The
-orchestrator's only job at that point is relaying the receipt's contents to
-the user — not summarizing, not softening, not attempting the fix itself.
+**Halt / escalation:** the runner halts mechanically at two points, with
+distinct semantics:
+
+- **Task escalation (exit 2)** — rework cap reached (2 iterations: initial
+  attempt + 1 rework). A receipt is written with outstanding findings; the
+  orchestrator relays the receipt's contents to the user verbatim, and
+  execution stops.
+
+- **Contract error (exit 1)** — malformed plan, brief/review-packet generation
+  failure, unparseable reviewer verdict, or reviewer process crash. The runner
+  fails loudly to stderr naming the cause (fail-loud contracts, no guess). No
+  receipt is written at this stage; the orchestrator relays the stderr cause.
+
+In both cases, the runner stops before starting the next task. The
+orchestrator's only job at that point is relaying information to the user —
+not summarizing, not softening, not attempting the fix itself.
 
 **Resume:** re-invoke the same command with the same `--run-dir` after the
 human has resolved the halt. The runner skips every task whose latest
-receipt status is `passed` and resumes at the escalated task. Resolution
-before re-invoking is a human decision among:
+receipt status is `passed` and resumes at the escalated task. If `--run-dir`
+was not specified on first invocation, it defaults to `.forge/runs/<timestamp>/`
+where the timestamp matches the run start time (format: YYYYMMDDTHHmmss); the
+operator can find it by checking `ls -t .forge/runs/` or by inspecting the
+`run.json` file there. Alternatively, specify `--run-dir` explicitly on first
+invocation to control the path. Resolution before re-invoking is a human
+decision among:
 
 - amend the brief source (plan or spec) to correct what the reviewer flagged;
 - re-tier the task (trivial/standard/complex) if routing was wrong for the work;
