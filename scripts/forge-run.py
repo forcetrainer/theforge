@@ -351,9 +351,25 @@ def write_run_json(run_dir, plan_path, spec_path, status, task_summaries):
     return path
 
 
+def ensure_forge_gitignore(cwd):
+    """Self-ignoring ``.forge/.gitignore`` containing ``*`` — no target-repo
+    setup required (Receipts spec, 2026-07-13 amendment). Idempotent: only
+    written if absent."""
+    forge_dir = os.path.join(cwd, ".forge")
+    os.makedirs(forge_dir, exist_ok=True)
+    path = os.path.join(forge_dir, ".gitignore")
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("*\n")
+    return path
+
+
 def annotate_ledger(plan_path, task, status_line):
-    """Check the task's plan checkbox and append ``— <status_line>``. Idempotent:
-    replaces any prior annotation."""
+    """Append ``— <status_line>`` to the task's plan checkbox line. Only a
+    passed outcome checks the box (``[x] ... — passed, N attempt(s)``); an
+    escalated outcome (``status_line`` starting with ``escalated``) leaves the
+    checkbox unchecked. Idempotent: replaces any prior annotation and prior
+    check state."""
     if task.checkbox_line < 0:
         return
     with open(plan_path, "r", encoding="utf-8") as f:
@@ -362,7 +378,8 @@ def annotate_ledger(plan_path, task, status_line):
     raw = lines[task.checkbox_line]
     nl = "\n" if raw.endswith("\n") else ""
     body = raw[: len(raw) - len(nl)] if nl else raw
-    body = re.sub(r"\[[ xX]\]", "[x]", body, count=1)
+    box = "[ ]" if status_line.startswith("escalated") else "[x]"
+    body = re.sub(r"\[[ xX]\]", box, body, count=1)
     body = re.sub(r"\s+—\s.*$", "", body)
     lines[task.checkbox_line] = body + " — " + status_line + nl
     with open(plan_path, "w", encoding="utf-8") as f:
@@ -427,6 +444,7 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd):
 
 def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd):
     os.makedirs(run_dir, exist_ok=True)
+    ensure_forge_gitignore(cwd)
     tasks = parse_plan_tasks(plan_path)
     order = order_tasks(tasks)
 

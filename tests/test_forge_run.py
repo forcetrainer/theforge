@@ -291,6 +291,20 @@ class AnnotateLedgerTests(unittest.TestCase):
         self.assertIn("[x] Done", content)
         self.assertIn("passed, 1 attempt(s)", content)
 
+    def test_escalated_leaves_checkbox_unchecked(self):
+        d = tempfile.mkdtemp(prefix="forge-run-ledger-esc-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        p = os.path.join(d, "plan.md")
+        with open(p, "w") as f:
+            f.write(PLAN_PASS)
+        task = forge_run.parse_plan_tasks(p)[0]
+        forge_run.annotate_ledger(p, task, "escalated: worker exited 1")
+        with open(p) as f:
+            content = f.read()
+        self.assertIn("[ ] Done", content)
+        self.assertNotIn("[x] Done", content)
+        self.assertIn("escalated: worker exited 1", content)
+
 
 class LoopSubprocessTests(unittest.TestCase):
     """End-to-end: invoke forge-run.py as a subprocess with a fake codex on the
@@ -437,6 +451,19 @@ class LoopSubprocessTests(unittest.TestCase):
         res = self._run(plan)
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("duplicate", res.stderr.lower())
+
+    def test_run_writes_forge_gitignore(self):
+        # Receipts spec (2026-07-13 amendment): on run-dir creation the runner
+        # writes a self-ignoring `.forge/.gitignore` containing `*` — no
+        # target-repo setup required.
+        plan = self._plan(PLAN_PASS)
+        res = self._run(plan)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        gitignore_path = os.path.join(self.d, ".forge", ".gitignore")
+        self.assertTrue(os.path.exists(gitignore_path))
+        with open(gitignore_path) as f:
+            content = f.read()
+        self.assertEqual(content.strip(), "*")
 
     def test_missing_contract_source_cli_exits_one_naming_cause(self):
         # Spec Tests bullet: "missing agents/*.md contract source exits 1" —
