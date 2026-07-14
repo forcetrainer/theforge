@@ -157,8 +157,27 @@ The `SessionStart` hook works on Codex without extra wiring — the shared
 `hooks/hooks.json` schema is compatible and Codex sets `CLAUDE_PLUGIN_ROOT`
 for plugin-hook compatibility.
 
+Plan execution runs through a deterministic runner instead of in-session
+subagent dispatch — one `codex exec` process per task, pinned model/effort
+per tier:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md>
+```
+
+See `skills/planning/codex-execution.md` for the invocation contract,
+halt/resume, and the orchestrator's reduced role. Receipts land in
+`.forge/runs/<timestamp>/`, uncommitted — the runner writes a self-ignoring
+`.forge/.gitignore` (`*`) on first run, so there's no target-repo setup.
+
 <details>
 <summary><strong>Known Codex caveats</strong></summary>
+
+These apply to ad-hoc in-session Codex subagents (exploration, one-off
+review) — the only place forge still spawns them. Plan execution goes
+through `forge-run.py`'s one-`codex exec`-process-per-task instead, which
+sidesteps both issues by construction (no parent-model inheritance, no
+completed-worker accumulation).
 
 - Subagent selection has known regressions (custom-agent selection broke in
   v0.137.0 and spawned agents silently inherited the parent model). If
@@ -168,8 +187,6 @@ for plugin-hook compatibility.
   keep counting against the thread limit
   ([openai/codex#19197](https://github.com/openai/codex/issues/19197),
   [openai/codex#22779](https://github.com/openai/codex/issues/22779)).
-  Sequential dispatch (`skills/planning/codex-execution.md`) keeps the pile
-  small; forge doesn't build cleanup machinery for a harness bug.
 
 </details>
 
