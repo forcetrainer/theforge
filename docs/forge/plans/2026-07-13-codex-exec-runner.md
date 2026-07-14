@@ -9,7 +9,7 @@
 **Global Constraints:** No third-party dependencies in `scripts/` or `tests/`. Tier→model/effort mapping exists in exactly one table in `forge-run.py`. All parse failures raise loudly naming the cause — never degrade, never guess (DECISIONS 2026-07-11). `ultra` reasoning effort is never emitted (DECISIONS 2026-07-13).
 
 ### Task 1: Live codex exec flag verification
-- [ ] Done
+- [ ] Done — deferred: Codex CLI unavailable on this machine (DEFERRALS.md 2026-07-13)
 
 **Files:**
 - Modify: none (verification only; findings reported back, spec amended only if flags diverge)
@@ -27,7 +27,7 @@
 **Depends on:** nothing.
 
 ### Task 2: forge-run.py — plan loop, dispatch, receipts, ledger
-- [ ] Done
+- [x] Done — passed, 3 attempts (2 escalation-gate reworks)
 
 **Files:**
 - Create: `scripts/forge-run.py`
@@ -51,7 +51,7 @@
 **Depends on:** Task 1.
 
 ### Task 3: forge-run.py — review, rework cap, halt, resume, final review
-- [ ] Done
+- [x] Done — passed, 2 attempts + cosmetic cleanup
 
 **Files:**
 - Modify: `scripts/forge-run.py` (extends Task 2 module; new functions only, no rework of Task 2 interfaces)
@@ -75,7 +75,7 @@
 **Depends on:** Task 2.
 
 ### Task 4: Retire TOML tier agents
-- [ ] Done
+- [x] Done — passed, 1 attempt
 
 **Files:**
 - Delete: `codex/agents/forge-light.toml`, `codex/agents/forge-standard.toml`, `codex/agents/forge-deep.toml` (and the now-empty `codex/` tree)
@@ -94,7 +94,7 @@
 **Depends on:** Task 3 (runner owns tier routing before the old mechanism is removed).
 
 ### Task 5: Docs — codex-execution.md rewrite, README Codex section
-- [ ] Done
+- [x] Done — passed, 2 attempts + halt-contract fix
 
 **Files:**
 - Modify: `skills/planning/codex-execution.md` (full rewrite)
@@ -113,7 +113,7 @@
 **Depends on:** Task 3.
 
 ### Task 6: Lockstep version bump
-- [ ] Done
+- [x] Done — passed, 1 attempt
 
 **Files:**
 - Modify: `.claude-plugin/plugin.json` (version bump)
