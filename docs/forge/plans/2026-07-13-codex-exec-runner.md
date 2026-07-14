@@ -119,8 +119,6 @@
 - Modify: `.claude-plugin/plugin.json` (version bump)
 - Modify: `.codex-plugin/plugin.json` (same version)
 
-**Spec:** (none)
-
 **Interface:** minor version bump (behavior change, no breaking manifest change); identical version string in both files.
 
 **Tests:** existing `tests/test_manifests.py` version-equality test covers it.
