@@ -51,9 +51,12 @@ before re-invoking is a human decision among:
 **Tier routing:** unchanged in substance from the pipelined path — trivial
 tasks skip reviewer dispatch (acceptance commands are the whole
 verification), standard and complex tasks get a reviewer dispatched via
-`codex exec` after acceptance passes. Model/effort per tier lives in exactly
-one table inside `forge-run.py` (`TIER_MAP`) — not duplicated here or in any
-per-tier config file.
+`codex exec` after acceptance passes. Model/effort per tier lives in
+`forge-run.py`, not here or in any per-tier config file — but in two tables,
+not one: `TIER_MAP` (worker model/effort, all three tiers) and `REVIEW_MAP`
+(reviewer model/effort, standard/complex only). `REVIEW_MAP` currently
+duplicates `TIER_MAP`'s standard/complex rows; a model-churn edit must
+update both, or reviewer routing goes silently stale.
 
 **Final review:** once every task passes, the runner dispatches one more
 `codex exec` call (sol/high) against the whole-plan diff and spec —
