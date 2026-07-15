@@ -9,7 +9,7 @@
 **Global Constraints:** stdlib only, no new dependencies; `.forge/` stays self-ignored and is never staged; Claude Code execution path unchanged; every runner behavior change carries a test in `tests/test_forge_run.py` using a real temporary git repo.
 
 ### Task 1: Runner commit discipline
-- [ ] Done
+- [x] Done — passed (1 review finding fixed: git add -A now fails loud)
 
 **Files:**
 - Modify: `scripts/forge-run.py` (add clean-tree precondition, per-task commit, per-task base = prior commit, persisted `base_commit`; retire `_snapshot_worktree`)
@@ -47,7 +47,7 @@
 **Depends on:** nothing.
 
 ### Task 2: Env-gated-skip authoring rule
-- [ ] Done
+- [x] Done — passed
 
 **Files:**
 - Modify: `skills/planning/SKILL.md` (acceptance-command authoring rule)
@@ -64,7 +64,7 @@
 **Depends on:** nothing.
 
 ### Task 3: Runner docs — precondition, commits, resume
-- [ ] Done
+- [x] Done — passed
 
 **Files:**
 - Modify: `README.md` (Codex runner section: clean-tree precondition + per-task commit behavior)
