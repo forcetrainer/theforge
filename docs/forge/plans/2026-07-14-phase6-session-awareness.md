@@ -9,7 +9,7 @@
 **Global Constraints:** No third-party dependencies. Codex-only — Claude Code untouched; the shared `hooks/hooks.json` gains no `UserPromptSubmit` entry. Fail loud naming the cause (DECISIONS 2026-07-11). The hook reads files only — no subprocess, no runner invocation — and must never block a prompt (any read error → silent exit 0).
 
 ### Task 1: forge_status.py — run-state reader and renderers
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `scripts/forge_status.py`
@@ -32,7 +32,7 @@
 **Depends on:** nothing.
 
 ### Task 2: forge-run.py — --status mode and incremental run.json
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/forge-run.py` (argparse `--status`; write `run.json` incrementally; re-export `forge_status`)
@@ -55,7 +55,7 @@
 **Depends on:** Task 1.
 
 ### Task 3: forge-run.py — --notify on terminal events
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/forge-run.py` (argparse `--notify`; `fire_notify`; three call sites)
@@ -77,7 +77,7 @@
 **Depends on:** Task 2.
 
 ### Task 4: user-prompt-submit hook
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `hooks/user-prompt-submit` (executable, `#!/usr/bin/env python3`)
@@ -99,7 +99,7 @@
 **Depends on:** Task 1.
 
 ### Task 5: Docs — codex-execution.md and README
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `skills/planning/codex-execution.md` (never-background-blind contract; `--notify`/`--status` invocation)
@@ -118,7 +118,7 @@
 **Depends on:** Task 2, Task 3, Task 4.
 
 ### Task 6: Lockstep version bump
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `.claude-plugin/plugin.json` (version bump)
