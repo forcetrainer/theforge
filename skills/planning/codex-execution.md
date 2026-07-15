@@ -96,7 +96,7 @@ human-readable record (`— passed, N attempt(s)` / `— escalated: <one-liner>`
 
 **Session awareness — never background blind:** the runner is always backgrounded to a redirected log, and its terminal events surface on their own — the orchestrator never polls `ps` and never trusts its own memory of where a run is.
 
-- **Notifications (on by default):** on every terminal event — task escalation, contract error, completion — the runner fires a notification. On macOS with no `--notify` given, that is a modal `osascript` alert (completion included — it's the integration decision gate). `--notify "<cmd>"` overrides with any command; it receives the event name and a one-line summary as trailing argv. `FORGE_NOTIFY_DISABLE=1` silences the default modal for non-interactive/CI runs. Notifications are fire-and-forget — a broken command never changes the runner's exit code.
+- **Notifications (on by default):** the runner fires on four events — each task completion (`task-passed`), escalation and contract error (halts), and whole-run completion (`completed`). On macOS with no `--notify` given, each is a modal `osascript` alert. `--notify "<cmd>"` overrides with any command; it receives the event name and a one-line summary as trailing argv (so a custom command can route per-task progress differently from halts). `FORGE_NOTIFY_DISABLE=1` silences the default modal for non-interactive/CI runs. Notifications are fire-and-forget — a broken command never changes the runner's exit code.
 - **On re-entry, trust injected state or `--status` — never memory.** State lives in receipts, not stdout (stdout is a human progress narrative for `tail -f`, never load-bearing). Read the current state with:
 
   ```bash

@@ -19,6 +19,7 @@ from _forge_support import (
     MINIMAL_SPEC,
     PLAN_ACC_FAIL,
     PLAN_PASS,
+    PLAN_TWO_TRIVIAL,
     SCRIPT_PATH,
     forge_run,
     write_fake_codex,
@@ -38,15 +39,20 @@ def _write_notifier(dirpath):
     return path
 
 
-def _wait_for(path, timeout=5.0):
-    """Poll for a fire-and-forget notifier's log line (Popen does not wait)."""
+def _wait_for(path, timeout=5.0, min_lines=1):
+    """Poll for fire-and-forget notifier log lines (Popen does not wait). Waits
+    until at least ``min_lines`` lines are present (several async notifiers may
+    write at slightly different times), or ``timeout``."""
     deadline = time.time() + timeout
+    last = ""
     while time.time() < deadline:
-        if os.path.exists(path) and os.path.getsize(path) > 0:
+        if os.path.exists(path):
             with open(path) as f:
-                return f.read()
+                last = f.read()
+            if len([ln for ln in last.splitlines() if ln.strip()]) >= min_lines:
+                return last
         time.sleep(0.02)
-    return ""
+    return last
 
 
 class FireNotifyUnitTests(unittest.TestCase):
@@ -134,6 +140,30 @@ class NotifyCallSiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             r = self._run(d, PLAN_PASS, notify_cmd="/nonexistent/notifier-xyz")
             self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_each_passed_task_fires_task_passed_event(self):
+        # Two trivial tasks (non-git cwd, no reviewer) both pass -> one
+        # task-passed per task, plus one completed at the end.
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "notify.log")
+            cmd = "{} {} {}".format(sys.executable, _write_notifier(d), log)
+            r = self._run(d, PLAN_TWO_TRIVIAL, notify_cmd=cmd)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            # 2 task-passed + 1 completed = 3 async notifier writes.
+            events = [ln.split("\t")[0]
+                      for ln in _wait_for(log, min_lines=3).splitlines()]
+            self.assertEqual(events.count("task-passed"), 2)
+            self.assertEqual(events.count("completed"), 1)
+
+    def test_task_passed_summary_names_the_task(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "notify.log")
+            cmd = "{} {} {}".format(sys.executable, _write_notifier(d), log)
+            self._run(d, PLAN_PASS, notify_cmd=cmd)
+            out = _wait_for(log)
+            passed = [ln for ln in out.splitlines() if ln.startswith("task-passed")]
+            self.assertTrue(passed)
+            self.assertIn("task 1", passed[0])
 
 
 if __name__ == "__main__":

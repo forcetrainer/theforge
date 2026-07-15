@@ -62,7 +62,7 @@ declarations only, no bodies. Later tasks must use these exact names.
 
 **Acceptance:** the commands to run and what must pass. An environment-gated skip is not a pass — an acceptance command must assert required infrastructure is present, or make the skip exit non-zero.
 
-**Tier:** trivial | standard | complex.
+**Tier:** trivial | standard | complex
 
 **Depends on:** Task M, or nothing.
 ```

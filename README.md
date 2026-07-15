@@ -171,7 +171,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md>
 
 **Session awareness (Codex-only):** the runner is meant to be backgrounded to a log. Terminal events surface on their own, and live state is pullable — so a backgrounded run is never blind.
 
-- **Notify on every terminal event** (escalation, contract error, completion) — on by default. macOS with no `--notify` fires a modal `osascript` alert; `--notify "<cmd>"` overrides (the command receives the event name + a one-line summary as trailing argv); `FORGE_NOTIFY_DISABLE=1` silences the default modal. Fire-and-forget — never changes the exit code.
+- **Notify on every event** — each task completion (`task-passed`), a halt (`escalated`/`contract-error`), and whole-run completion (`completed`) — on by default. macOS with no `--notify` fires a modal `osascript` alert per event; `--notify "<cmd>"` overrides (the command receives the event name + a one-line summary as trailing argv, so it can route progress vs. halts); `FORGE_NOTIFY_DISABLE=1` silences the default modal. Fire-and-forget — never changes the exit code.
 - **`--status`** reads the run state without dispatching anything:
 
   ```bash
