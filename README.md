@@ -178,17 +178,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md>
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" --status --run-dir .forge/runs/<name>
   ```
 
-- **Auto-inject live run state on every Codex prompt** via the `UserPromptSubmit` hook. Codex-only, wired in **your Codex config, not the shared `hooks/hooks.json`** (both harnesses read that file; Claude Code has native session awareness and needs none of this). Add to `~/.codex/config.toml`:
-
-  ```toml
-  [[hooks.UserPromptSubmit]]
-
-  [[hooks.UserPromptSubmit.hooks]]
-  type = "command"
-  command = 'python3 "/absolute/path/to/forge/hooks/user-prompt-submit"'
-  ```
-
-  Use the absolute path to the installed plugin's hook (a user-level hook can't rely on `$CLAUDE_PLUGIN_ROOT` being set). Codex gates project/user command hooks on a one-time trust review via `/hooks`.
+- **Auto-inject live run state on every Codex prompt** via the `UserPromptSubmit` hook — shipped wired in the shared `hooks/hooks.json` (auto-installed on both harnesses like `SessionStart`, no manual step). It self-gates to Codex: silent under Claude Code (which has native session awareness), fires under Codex, and is silent anywhere there's no active run. Codex may prompt a one-time trust review for the hook via `/hooks`.
 
 See `skills/planning/codex-execution.md` for the invocation contract,
 halt/resume, and the orchestrator's reduced role. Receipts land in

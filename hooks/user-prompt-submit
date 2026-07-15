@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""forge UserPromptSubmit hook (Codex-only) — injects live run state.
+"""forge UserPromptSubmit hook (Codex session awareness) — injects live run state.
 
 On each prompt, if the session cwd has a `.forge/runs/` with a live or
 recently-terminal run, emit a compact status block as `additionalContext` so the
@@ -9,9 +9,12 @@ Reads files only — no subprocess, no runner invocation — and never blocks a
 prompt: any error is swallowed to a stderr note with exit 0. Shares its renderer
 with `forge-run.py --status` via `scripts/forge_status.py`.
 
-Wired Codex-only via `~/.codex/config.toml` (or a repo `.codex/hooks.json`),
-never the shared plugin `hooks/hooks.json` (both harnesses read that — an entry
-there would fire in Claude). See README / codex-execution.md for the install.
+Wired via the shared plugin `hooks/hooks.json` (auto-installed on both harnesses,
+like `session-start`). Session awareness is a Codex feature — Claude Code handles
+it natively — so a best-effort harness gate keeps this SILENT under Claude: its
+UserPromptSubmit input carries `transcript_path` (Codex's carries `turn_id`
+instead). When the signal is ambiguous the hook fires (it degrades to firing in
+both, which is harmless — silent whenever there's no active run).
 """
 import json
 import os
@@ -23,13 +26,30 @@ _SCRIPTS = os.path.join(
 )
 
 
+def _is_claude(hook_input):
+    """Best-effort: suppress under Claude Code (its hook input carries
+    `transcript_path` and no Codex `turn_id`). Err toward firing when unsure."""
+    if not isinstance(hook_input, dict):
+        return False
+    return bool(hook_input.get("transcript_path")) and not hook_input.get("turn_id")
+
+
 def main():
-    # Drain stdin (Codex delivers the hook input as JSON there); we only need the
-    # session cwd, which is our own working directory.
+    # Codex/Claude deliver the hook input as JSON on stdin; we read it to gate on
+    # harness, and otherwise only need the session cwd (our own working dir).
+    raw = ""
     try:
-        sys.stdin.read()
+        raw = sys.stdin.read()
     except Exception:  # noqa: BLE001 - stdin is best-effort, never fatal
-        pass
+        raw = ""
+    hook_input = {}
+    if raw.strip():
+        try:
+            hook_input = json.loads(raw)
+        except Exception:  # noqa: BLE001 - malformed input -> treat as ambiguous
+            hook_input = {}
+    if _is_claude(hook_input):
+        return 0  # Claude has native session awareness; this hook is Codex-only
 
     try:
         runs = os.path.join(os.getcwd(), ".forge", "runs")

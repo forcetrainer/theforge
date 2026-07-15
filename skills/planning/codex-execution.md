@@ -104,7 +104,7 @@ human-readable record (`— passed, N attempt(s)` / `— escalated: <one-liner>`
   ```
 
   It prints the run state (`RUNNING` | `COMPLETED` | `HALTED — <reason>` | `CONTRACT-ERROR — <cause>`) and one line per task, from `run.json` + receipts; it dispatches nothing and exits 0.
-- **Auto-injected state (Codex-only):** the `hooks/user-prompt-submit` hook injects a compact live-run block on every prompt so the orchestrator never operates on stale memory. It is **Codex-only** and wired via `~/.codex/config.toml` (see README) — never the shared `hooks/hooks.json`, which both harnesses read. Claude Code has native session awareness and needs none of this.
+- **Auto-injected state:** the `hooks/user-prompt-submit` hook injects a compact live-run block on every prompt so the orchestrator never operates on stale memory. It ships wired in the shared `hooks/hooks.json` (auto-installed on both harnesses like `session-start` — no manual step), and self-gates to Codex: it stays silent under Claude Code (which has native session awareness) and fires under Codex. It is already silent whenever there's no active run.
 
 **In-session Codex subagents remain acceptable outside plan execution** —
 ad-hoc exploration, one-off review, anything that isn't dispatched by the

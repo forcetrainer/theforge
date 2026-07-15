@@ -44,10 +44,15 @@ def _age(path, hours):
             os.utime(os.path.join(root, name), (old, old))
 
 
-def _run_hook(cwd):
+def _run_hook(cwd, hook_input=None):
+    # Default input carries a Codex-style turn_id (no Claude transcript_path), so
+    # the harness gate treats it as a Codex session and the hook fires.
+    payload = {"cwd": cwd, "prompt": "hi", "turn_id": "t1"}
+    if hook_input is not None:
+        payload = hook_input
     return subprocess.run(
         [sys.executable, str(HOOK)],
-        cwd=cwd, input=json.dumps({"cwd": cwd, "prompt": "hi"}),
+        cwd=cwd, input=json.dumps(payload),
         capture_output=True, text=True,
     )
 
@@ -109,6 +114,34 @@ class PromptHookTests(unittest.TestCase):
             r = _run_hook(d)
             block = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
             self.assertIn("RUNNING", block)
+
+    def test_silent_under_claude_input(self):
+        # Claude's UserPromptSubmit input carries transcript_path (and no Codex
+        # turn_id) -> the harness gate suppresses; session awareness is Codex-only.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            _make_run(d, "20260101T000000", "running", [_summary(1, "passed")])
+            r = _run_hook(d, hook_input={"cwd": d, "prompt": "hi",
+                                         "transcript_path": "/tmp/t.jsonl"})
+            self.assertEqual(r.returncode, 0)
+            self.assertEqual(r.stdout.strip(), "")
+
+    def test_fires_under_codex_input(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            _make_run(d, "20260101T000000", "running", [_summary(1, "passed")])
+            r = _run_hook(d, hook_input={"cwd": d, "prompt": "hi", "turn_id": "t1"})
+            self.assertTrue(r.stdout.strip())
+            json.loads(r.stdout)
+
+    def test_ambiguous_input_fires(self):
+        # Neither transcript_path nor turn_id -> err toward firing (degrades to
+        # option 1: fires in both, silent when no run).
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            _make_run(d, "20260101T000000", "running", [_summary(1, "passed")])
+            r = _run_hook(d, hook_input={"cwd": d, "prompt": "hi"})
+            self.assertTrue(r.stdout.strip())
 
     def test_malformed_run_json_is_silent_exit_0(self):
         import tempfile
