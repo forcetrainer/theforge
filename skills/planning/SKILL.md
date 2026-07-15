@@ -60,7 +60,7 @@ declarations only, no bodies. Later tasks must use these exact names.
 **Tests:** the list of test cases, by behavior — "rejects empty email",
 "retries 3 times then throws". Descriptions, not code.
 
-**Acceptance:** the commands to run and what must pass.
+**Acceptance:** the commands to run and what must pass. An environment-gated skip is not a pass — an acceptance command must assert required infrastructure is present, or make the skip exit non-zero.
 
 **Tier:** trivial | standard | complex.
 

@@ -12,12 +12,16 @@ parent-model inheritance, no child-thread quota accumulation.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md>
 ```
 
+**Precondition — clean working tree:** every invocation (first run and resume) requires `git status --porcelain` to be empty, with `.forge/` self-ignored. A dirty tree causes a contract error (exit 1) naming the dirty paths; the human must commit or discard those changes before re-invoking. The runner never resets or stashes user work.
+
 That single call is whole-plan scope. The runner owns the task loop
 (`Depends on` order, sequential, one worker at a time — no pipelining, no
 worktree isolation), brief generation, worker dispatch, acceptance-command
 execution, review dispatch, the rework cap, receipts, and plan-checkbox
 ledger annotations. It reuses `extract-brief.py` and `review-packet.py` for
 all plan/spec parsing — no duplicated heading grammar.
+
+**Commit discipline:** after each task reaches `passed` and its ledger checkbox is annotated, the runner stages all changes and commits with message `forge: task N — <title>`. Nothing staged (e.g., uncommitted changes from a human pre-fix on resume) means the commit is skipped; no empty commits are created. The `.forge/` directory is never staged; the ledger annotation rides in the task's commit. Escalated tasks commit nothing — the rejected attempt stays uncommitted for the human to resolve. This establishes a clean checkpoint after every passed task, so HEAD is a reliable base for per-task review and resume.
 
 **Orchestrator's role is reduced to four things:** invoke the runner, relay
 escalation receipts to the user verbatim, hold the human gates (execution
@@ -45,13 +49,18 @@ not summarizing, not softening, not attempting the fix itself.
 
 **Resume:** re-invoke the same command with the same `--run-dir` after the
 human has resolved the halt. The runner skips every task whose latest
-receipt status is `passed` and resumes at the escalated task. If `--run-dir`
-was not specified on first invocation, it defaults to `.forge/runs/<timestamp>/`
-where the timestamp matches the run start time (format: YYYYMMDDTHHmmss); the
-operator can find it by checking `ls -t .forge/runs/` or by inspecting the
-`run.json` file there. Alternatively, specify `--run-dir` explicitly on first
-invocation to control the path. Resolution before re-invoking is a human
-decision among:
+receipt status is `passed` and resumes at the escalated task. Since passed
+tasks are already committed, the clean working tree precondition at resume
+start is the normal state. If an escalated task was attempted but not passed,
+its uncommitted work must be committed (as a fix) or discarded by the human
+before re-invoking — the precondition enforces this.
+
+If `--run-dir` was not specified on first invocation, it defaults to
+`.forge/runs/<timestamp>/` where the timestamp matches the run start time
+(format: YYYYMMDDTHHmmss); the operator can find it by checking `ls -t .forge/runs/`
+or by inspecting the `run.json` file there. Alternatively, specify `--run-dir`
+explicitly on first invocation to control the path. Resolution before re-invoking
+is a human decision among:
 
 - amend the brief source (plan or spec) to correct what the reviewer flagged;
 - re-tier the task (trivial/standard/complex) if routing was wrong for the work;
