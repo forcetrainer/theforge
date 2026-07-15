@@ -19,6 +19,7 @@ if SCRIPTS not in sys.path:
 import forge_status  # noqa: E402
 from _forge_support import (  # noqa: E402
     MINIMAL_SPEC,
+    PLAN_STD,
     SCRIPT_PATH,
     write_fake_codex,
 )
@@ -295,17 +296,49 @@ class IncrementalRunJsonTests(unittest.TestCase):
                 final = json.load(f)
             self.assertEqual(final["status"], "passed")
 
-    def test_contract_error_after_run_dir_persists_marker(self):
+    def test_contract_error_before_run_dir_writes_no_run_json(self):
         with tempfile.TemporaryDirectory() as d:
             rd = os.path.join(d, "run")
             # --effort references a task number the plan lacks -> contract error
-            # raised after the run dir exists.
+            # raised before the run dir is created; spec says no run.json.
             r = self._run_plan(d, _plan(), rd, extra=["--effort", "99=high"])
             self.assertEqual(r.returncode, 1)
+            self.assertFalse(os.path.exists(os.path.join(rd, "run.json")))
+
+    def test_contract_error_after_run_dir_persists_marker(self):
+        # A standard task reaches the reviewer; an unparseable verdict is a
+        # contract error raised mid-loop, after the run dir exists -> marker.
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q"], cwd=d, check=True)
+            subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=d, check=True)
+            plan_path = os.path.join(d, "plan.md")
+            spec_path = os.path.join(d, "spec.md")
+            with open(plan_path, "w") as f:
+                f.write(PLAN_STD)
+            with open(spec_path, "w") as f:
+                f.write(MINIMAL_SPEC)
+            resp = os.path.join(d, "responses.json")
+            with open(resp, "w") as f:
+                # worker call (ok), then reviewer call returning non-JSON.
+                json.dump([{"exit": 0, "msg": ""},
+                           {"exit": 0, "msg": "totally not a verdict"}], f)
+            fake = write_fake_codex(d)
+            # Commit everything so the working tree is clean at run start (else the
+            # clean-tree precondition trips before the run dir is created).
+            subprocess.run(["git", "add", "-A"], cwd=d, check=True)
+            subprocess.run(["git", "commit", "-qm", "init"], cwd=d, check=True)
+            rd = os.path.join(d, "run")
+            env = os.environ.copy()
+            env["FORGE_FAKE_LOG"] = os.path.join(d, "codex.log")
+            env["FORGE_FAKE_RESPONSES"] = resp
+            r = _run_cli([plan_path, "--spec", spec_path, "--run-dir", rd,
+                          "--codex-bin", fake], cwd=d, env=env)
+            self.assertEqual(r.returncode, 1, r.stderr)
             with open(os.path.join(rd, "run.json")) as f:
                 data = json.load(f)
             self.assertEqual(data["status"], "contract-error")
-            self.assertIn("99", data.get("contract_error", ""))
+            self.assertTrue(data.get("contract_error"))
 
 
 class DirtyTreeNoRunJsonTests(unittest.TestCase):

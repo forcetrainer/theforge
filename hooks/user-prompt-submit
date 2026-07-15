@@ -31,15 +31,15 @@ def main():
     except Exception:  # noqa: BLE001 - stdin is best-effort, never fatal
         pass
 
-    runs = os.path.join(os.getcwd(), ".forge", "runs")
-    if not os.path.isdir(runs):
-        return 0
-    names = [n for n in os.listdir(runs) if os.path.isdir(os.path.join(runs, n))]
-    if not names:
-        return 0
-    latest = os.path.join(runs, max(names))  # dir names are sortable timestamps
-
     try:
+        runs = os.path.join(os.getcwd(), ".forge", "runs")
+        if not os.path.isdir(runs):
+            return 0
+        names = [n for n in os.listdir(runs) if os.path.isdir(os.path.join(runs, n))]
+        if not names:
+            return 0
+        latest = os.path.join(runs, max(names))  # dir names are sortable timestamps
+
         if _SCRIPTS not in sys.path:
             sys.path.insert(0, _SCRIPTS)
         import forge_status

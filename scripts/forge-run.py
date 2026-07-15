@@ -498,8 +498,10 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             "working tree not clean at run start — commit or discard before "
             "re-invoking:\n{}".format("\n".join(dirty))
         )
-    os.makedirs(run_dir, exist_ok=True)
-    ensure_forge_gitignore(cwd)
+    # Parse and validate the plan BEFORE creating the run dir: an unparseable
+    # plan (or an --effort pointing at a missing task) is a contract error that
+    # must leave no run.json — the spec surfaces it via stderr + --notify only.
+    # Neither call depends on the run dir.
     tasks = parse_plan_tasks(plan_path)
     order = order_tasks(tasks)
     effort_overrides = effort_overrides or {}
@@ -512,6 +514,8 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
                 ", ".join(str(t.number) for t in tasks),
             )
         )
+    os.makedirs(run_dir, exist_ok=True)
+    ensure_forge_gitignore(cwd)
     # Whole-plan final-review diff base: the run-start HEAD, captured once and
     # persisted in run.json so a resume reuses it rather than a HEAD that has
     # advanced past already-committed tasks.
