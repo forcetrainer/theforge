@@ -44,7 +44,8 @@ def _read_run_tasks(run_dir):
         return None
 
 
-def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_commit):
+def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_commit,
+                   contract_error=None):
     os.makedirs(run_dir, exist_ok=True)
     data = {
         "plan": os.path.abspath(plan_path),
@@ -53,6 +54,8 @@ def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_c
         "base_commit": base_commit,
         "tasks": task_summaries,
     }
+    if contract_error is not None:
+        data["contract_error"] = contract_error
     path = os.path.join(run_dir, "run.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

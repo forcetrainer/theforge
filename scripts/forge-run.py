@@ -39,6 +39,7 @@ import datetime
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from dataclasses import asdict
@@ -59,6 +60,7 @@ import forge_common
 import forge_git
 import forge_plan
 import forge_receipts
+import forge_status
 
 # Re-export the sibling API into this namespace: the runner's own code below
 # calls these by bare name, and tests/docs address them as ``forge_run.<name>``.
@@ -109,6 +111,34 @@ _ACC_TAIL_CHARS = forge_common._ACC_TAIL_CHARS
 
 
 # --- worker dispatch --------------------------------------------------------
+
+
+def fire_notify(event, summary, cmd=None):
+    """Fire a terminal-event notification (``escalated`` | ``contract-error`` |
+    ``completed``), fire-and-forget: never blocks the exit path, never raises,
+    never changes the exit code — a failure is a stderr warning. ``cmd`` (a
+    shell string) receives ``event`` and ``summary`` as trailing argv. No cmd:
+    macOS fires a modal ``osascript`` alert; other platforms write a stderr line
+    and fire nothing (session awareness is Codex-on-macOS)."""
+    try:
+        if cmd:
+            argv = shlex.split(cmd) + [event, summary]
+        elif os.environ.get("FORGE_NOTIFY_DISABLE"):
+            # Automated/non-interactive context (the test suite sets this) — never
+            # pop the default desktop modal. An explicit --notify CMD still fires.
+            return
+        elif sys.platform == "darwin":
+            message = summary.replace('"', "'")
+            argv = ["osascript", "-e",
+                    'display alert "forge run" message "{}"'.format(message)]
+        else:
+            sys.stderr.write("forge notify: {} — {}\n".format(event, summary))
+            return
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError) as e:
+        sys.stderr.write(
+            "forge notify: failed to fire ({}): {}\n".format(cmd or "osascript", e)
+        )
 
 
 def _agents_dir():
@@ -449,7 +479,7 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd,
 
 
 def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=None,
-             timeout=DEFAULT_TIMEOUT):
+             timeout=DEFAULT_TIMEOUT, notify_cmd=None):
     """Sequential whole-plan loop. Tasks already ``passed`` in this run-dir (a
     resume) are skipped; the rest run through execute_task in dependency order.
     Halts on the first escalation. After every task passes, one plan-level final
@@ -468,8 +498,10 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             "working tree not clean at run start — commit or discard before "
             "re-invoking:\n{}".format("\n".join(dirty))
         )
-    os.makedirs(run_dir, exist_ok=True)
-    ensure_forge_gitignore(cwd)
+    # Parse and validate the plan BEFORE creating the run dir: an unparseable
+    # plan (or an --effort pointing at a missing task) is a contract error that
+    # must leave no run.json — the spec surfaces it via stderr + --notify only.
+    # Neither call depends on the run dir.
     tasks = parse_plan_tasks(plan_path)
     order = order_tasks(tasks)
     effort_overrides = effort_overrides or {}
@@ -482,6 +514,8 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
                 ", ".join(str(t.number) for t in tasks),
             )
         )
+    os.makedirs(run_dir, exist_ok=True)
+    ensure_forge_gitignore(cwd)
     # Whole-plan final-review diff base: the run-start HEAD, captured once and
     # persisted in run.json so a resume reuses it rather than a HEAD that has
     # advanced past already-committed tasks.
@@ -494,6 +528,12 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
     task_summaries = []
     overall = "passed"
     escalated = False
+
+    # Incremental run.json: write `running` before the first task so --status/the
+    # hook can distinguish an in-progress run from a dead one, and rewrite after
+    # each passed task so live per-task progress is visible. base_commit rides
+    # along so a resume still reads it.
+    write_run_json(run_dir, plan_path, spec_path, "running", task_summaries, run_base)
 
     # order_tasks yields dependency order (each dependency before its dependents)
     # and the loop breaks on the first escalation, so a dependent is never reached
@@ -515,10 +555,13 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             continue
 
         _clear_task_receipts(run_dir, task.number)
+        print("task {}: {} — starting".format(task.number, task.title), flush=True)
         outcome = execute_task(
             task, plan_path, spec_path, run_dir, codex_bin, cwd,
             effort_override=effort_overrides.get(task.number), timeout=timeout,
         )
+        print("task {}: {} ({} attempt(s))".format(
+            task.number, outcome.status, outcome.attempts), flush=True)
         summary = {
             "number": task.number,
             "title": task.title,
@@ -535,10 +578,18 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             # Commit this task's slice (ledger annotation included); records the
             # SHA, or None when the task changed nothing (no empty commit).
             summary["commit"] = _git_commit_task(cwd, task)
+            write_run_json(
+                run_dir, plan_path, spec_path, "running", task_summaries, run_base
+            )
         else:
             annotate_ledger(plan_path, task, "escalated: {}".format(outcome.summary))
             overall = "escalated"
             escalated = True
+            fire_notify(
+                "escalated",
+                "task {} escalated: {}".format(task.number, outcome.summary),
+                notify_cmd,
+            )
             break
 
     if not escalated and run_base is not None:
@@ -554,6 +605,14 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
                 overall = "escalated-final-review"
 
     write_run_json(run_dir, plan_path, spec_path, overall, task_summaries, run_base)
+    if not escalated:
+        # Task-escalation already notified at the break above; here handle the two
+        # remaining terminal events — a final-review halt and a clean completion.
+        if overall == "escalated-final-review":
+            fire_notify("escalated", "final review escalated", notify_cmd)
+        else:
+            passed = sum(1 for t in task_summaries if t["status"] == "passed")
+            fire_notify("completed", "{} task(s) passed".format(passed), notify_cmd)
     return 0 if overall == "passed" else 2
 
 
@@ -577,8 +636,14 @@ def main(argv=None):
         prog="forge-run.py",
         description="Deterministic whole-plan task runner over `codex exec`.",
     )
-    parser.add_argument("plan", help="approved plan markdown file")
-    parser.add_argument("--spec", required=True, help="design spec markdown file")
+    parser.add_argument("plan", nargs="?", help="approved plan markdown file")
+    parser.add_argument("--spec", help="design spec markdown file")
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="read-only: print the run summary for --run-dir and exit; "
+        "dispatches nothing (plan/--spec not required)",
+    )
     parser.add_argument(
         "--run-dir",
         default=None,
@@ -605,7 +670,30 @@ def main(argv=None):
         help="seconds before a worker/reviewer codex subprocess is killed "
         "(default: {})".format(DEFAULT_TIMEOUT),
     )
+    parser.add_argument(
+        "--notify",
+        default=None,
+        metavar="CMD",
+        help="shell command fired fire-and-forget on every terminal event "
+        "(escalation, contract error, completion) with the event and a one-line "
+        "summary appended as argv; default on macOS is a modal osascript alert",
+    )
     args = parser.parse_args(argv)
+
+    # Read-only status mode: print the run summary from run.json + receipts and
+    # exit. Dispatches nothing; plan/--spec are not required.
+    if args.status:
+        if not args.run_dir:
+            parser.error("--status requires --run-dir")
+        state = forge_status.read_run_state(args.run_dir)
+        if state is None:
+            print("no run at {}".format(args.run_dir))
+        else:
+            print(forge_status.render_status(state))
+        return 0
+
+    if not args.plan or not args.spec:
+        parser.error("plan and --spec are required (or use --status --run-dir)")
 
     run_dir = args.run_dir or _default_run_dir()
     try:
@@ -613,9 +701,25 @@ def main(argv=None):
         return run_plan(
             args.plan, args.spec, run_dir, args.codex_bin, os.getcwd(),
             effort_overrides=effort_overrides, timeout=args.timeout,
+            notify_cmd=args.notify,
         )
     except RuntimeError as e:
         print("error: {}".format(e), file=sys.stderr)
+        fire_notify("contract-error", str(e), args.notify)
+        # Persist a contract-error marker when the run dir already exists, so
+        # --status/the hook report it. Errors before the run dir exists (dirty
+        # tree, unparseable plan) leave no run.json — stderr is the only signal.
+        # Preserve any base_commit/tasks already persisted so a later resume is
+        # unaffected (the error may have struck mid-run, after tasks committed).
+        if os.path.isdir(run_dir):
+            try:
+                write_run_json(
+                    run_dir, args.plan, args.spec, "contract-error",
+                    _read_run_tasks(run_dir) or [], _read_base_commit(run_dir),
+                    contract_error=str(e),
+                )
+            except OSError:
+                pass
         return 1
 
 

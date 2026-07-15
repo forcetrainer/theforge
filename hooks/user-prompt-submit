@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""forge UserPromptSubmit hook (Codex-only) — injects live run state.
+
+On each prompt, if the session cwd has a `.forge/runs/` with a live or
+recently-terminal run, emit a compact status block as `additionalContext` so the
+Codex orchestrator never operates on stale memory. Otherwise emit nothing.
+
+Reads files only — no subprocess, no runner invocation — and never blocks a
+prompt: any error is swallowed to a stderr note with exit 0. Shares its renderer
+with `forge-run.py --status` via `scripts/forge_status.py`.
+
+Wired Codex-only via `~/.codex/config.toml` (or a repo `.codex/hooks.json`),
+never the shared plugin `hooks/hooks.json` (both harnesses read that — an entry
+there would fire in Claude). See README / codex-execution.md for the install.
+"""
+import json
+import os
+import sys
+import time
+
+_SCRIPTS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"
+)
+
+
+def main():
+    # Drain stdin (Codex delivers the hook input as JSON there); we only need the
+    # session cwd, which is our own working directory.
+    try:
+        sys.stdin.read()
+    except Exception:  # noqa: BLE001 - stdin is best-effort, never fatal
+        pass
+
+    try:
+        runs = os.path.join(os.getcwd(), ".forge", "runs")
+        if not os.path.isdir(runs):
+            return 0
+        names = [n for n in os.listdir(runs) if os.path.isdir(os.path.join(runs, n))]
+        if not names:
+            return 0
+        latest = os.path.join(runs, max(names))  # dir names are sortable timestamps
+
+        if _SCRIPTS not in sys.path:
+            sys.path.insert(0, _SCRIPTS)
+        import forge_status
+
+        state = forge_status.read_run_state(latest)
+        if state is None:
+            return 0
+        block = forge_status.render_hook_block(state, now=time.time())
+        if not block:
+            return 0
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": block,
+            }
+        }))
+    except Exception as e:  # noqa: BLE001 - a broken hook must never block a prompt
+        sys.stderr.write("forge hook: {}\n".format(e))
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
