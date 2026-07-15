@@ -581,6 +581,11 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             write_run_json(
                 run_dir, plan_path, spec_path, "running", task_summaries, run_base
             )
+            fire_notify(
+                "task-passed",
+                "task {} passed ({} attempt(s))".format(task.number, outcome.attempts),
+                notify_cmd,
+            )
         else:
             annotate_ledger(plan_path, task, "escalated: {}".format(outcome.summary))
             overall = "escalated"
