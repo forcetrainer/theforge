@@ -19,314 +19,93 @@ Exit codes:
        reviewer process crash)
     2  halted on an escalated task
 
-Reuses ``extract-brief.py`` for all plan/spec parsing — no duplicated heading
-grammar. Tier -> model/effort mapping lives in exactly one table (``TIER_MAP``).
-All parse failures raise loudly naming the cause (DECISIONS 2026-07-11);
-``ultra`` reasoning effort is never emitted (DECISIONS 2026-07-13).
+Structure: this module owns dispatch, review, the per-task rework loop, the plan
+loop, and the CLI. Its supporting concerns live in sibling modules, imported
+below and re-exported into this namespace (the test suite and ``codex-execution``
+docs address them as ``forge_run.<name>``):
+    forge_common    — dataclasses, tier/effort constants, ``eb``/``rp`` loaders
+    forge_plan      — plan parsing, task ordering, effort-override parsing
+    forge_git       — git helpers + review-packet assembly
+    forge_receipts  — receipts, run.json, plan-checkbox ledger
+
+Reuses ``extract-brief.py``/``review-packet.py`` (via forge_common) for all
+plan/spec parsing and packet assembly — no duplicated heading grammar. Tier ->
+model/effort mapping lives in exactly one table (``TIER_MAP``). All parse
+failures raise loudly naming the cause (DECISIONS 2026-07-11); ``ultra``
+reasoning effort is never emitted (DECISIONS 2026-07-13).
 """
 import argparse
 import datetime
 import hashlib
-import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPTS_DIR)
 
-# Reuse extract-brief.py (hyphenated filename -> importlib) for plan/spec parsing.
-_eb_spec = importlib.util.spec_from_file_location(
-    "forge_run_extract_brief", os.path.join(SCRIPTS_DIR, "extract-brief.py")
+# The helper modules are plain (underscore-named) siblings. Put SCRIPTS_DIR on
+# the path so they import as normal modules — ``sys.modules`` then caches one
+# instance of each (notably forge_common), so the shared dataclasses keep a
+# single identity across every module and the test suite. (extract-brief.py /
+# review-packet.py stay importlib-loaded inside forge_common: hyphenated names.)
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+import forge_common
+import forge_git
+import forge_plan
+import forge_receipts
+
+# Re-export the sibling API into this namespace: the runner's own code below
+# calls these by bare name, and tests/docs address them as ``forge_run.<name>``.
+from forge_common import (  # noqa: F401
+    ALLOWED_EFFORTS,
+    CONTRACT_AGENT,
+    DEFAULT_TIMEOUT,
+    MAX_ATTEMPTS,
+    REVIEW_MAP,
+    REVIEW_VERDICT_INSTRUCTION,
+    TIER_MAP,
+    AcceptanceResult,
+    Task,
+    TaskOutcome,
+    Verdict,
+    WorkerResult,
+    eb,
+    rp,
+    verdict_to_dict,
 )
-eb = importlib.util.module_from_spec(_eb_spec)
-_eb_spec.loader.exec_module(eb)
-
-# Reuse review-packet.py for the reviewer packet (task block / spec + git diff) —
-# no duplicated packet assembly or heading grammar.
-_rp_spec = importlib.util.spec_from_file_location(
-    "forge_run_review_packet", os.path.join(SCRIPTS_DIR, "review-packet.py")
+from forge_git import (  # noqa: F401
+    _final_packet,
+    _git_commit_task,
+    _git_diff,
+    _git_head,
+    _packet_for,
+    _working_tree_dirty,
 )
-rp = importlib.util.module_from_spec(_rp_spec)
-_rp_spec.loader.exec_module(rp)
-
-
-# Tier -> (model, model_reasoning_effort). Single update point on model churn.
-TIER_MAP = {
-    "trivial": ("gpt-5.6-luna", "medium"),
-    "standard": ("gpt-5.6-terra", "high"),
-    "complex": ("gpt-5.6-sol", "high"),
-}
-# Reviewer routing (used in Task 3); trivial tier has no reviewer.
-REVIEW_MAP = {
-    "standard": ("gpt-5.6-terra", "high"),
-    "complex": ("gpt-5.6-sol", "high"),
-}
-# Worker contract source per tier — agents/*.md body (frontmatter stripped),
-# single source shared with the Claude Code harness.
-CONTRACT_AGENT = {
-    "trivial": "forge-light",
-    "standard": "forge-standard",
-    "complex": "forge-deep",
-}
-
-_ACC_TAIL_CHARS = 2000
-
-# Rework cap: initial attempt + one rework, enforced as a loop counter
-# (DECISIONS 2026-07-13 — the prose cap proved unenforceable).
-MAX_ATTEMPTS = 2
-
-# Default subprocess timeout (seconds) for worker and reviewer `codex exec`
-# calls; overridable via --timeout. A hung worker/reviewer must not hang the
-# runner forever (final-review finding).
-DEFAULT_TIMEOUT = 3600
-
-# Allowed --effort override levels (per-task worker dispatch only). `ultra` is
-# deliberately excluded — it is prohibited at every tier (DECISIONS 2026-07-13).
-ALLOWED_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-
-# Reviewer verdict contract — the machine-readable half the runner parses. Kept
-# in the runner (not agents/*.md) because the JSON shape is a runner concern; the
-# reviewer's judgement rules live in the agents/*.md review paragraph (preamble).
-REVIEW_VERDICT_INSTRUCTION = (
-    "End your message with your verdict as exactly one JSON object and nothing "
-    "after it: {\"verdict\": \"pass\"} when the diff satisfies the spec and the "
-    "task, or {\"verdict\": \"findings\", \"findings\": [\"<file:line - issue>\", "
-    "...]} listing every blocking issue as strings. The runner parses the last "
-    "JSON object in your message; emit nothing parseable as JSON after it."
+from forge_plan import (  # noqa: F401
+    order_tasks,
+    parse_effort_overrides,
+    parse_plan_tasks,
+)
+from forge_receipts import (  # noqa: F401
+    _clear_task_receipts,
+    _read_base_commit,
+    _read_latest_receipt,
+    _read_run_tasks,
+    annotate_ledger,
+    ensure_forge_gitignore,
+    latest_status,
+    write_final_review_receipt,
+    write_receipt,
+    write_run_json,
 )
 
-
-@dataclass
-class Task:
-    number: int
-    title: str
-    tier: str
-    depends_on: list = field(default_factory=list)
-    acceptance_commands: list = field(default_factory=list)
-    checkbox_line: int = -1
-
-
-@dataclass
-class AcceptanceResult:
-    command: str
-    exit_code: int
-    output_tail: str
-
-
-@dataclass
-class WorkerResult:
-    exit_code: int
-    last_message: str
-    argv: list
-    timed_out: bool = False
-
-
-@dataclass
-class Verdict:
-    kind: str  # "pass" | "findings"
-    findings: list = field(default_factory=list)
-
-
-@dataclass
-class TaskOutcome:
-    status: str  # "passed" | "escalated"
-    attempts: int
-    summary: str
-    findings: list = field(default_factory=list)
-
-
-# --- plan parsing (reuses extract-brief heading grammar) --------------------
-
-
-def _field_value(block_lines, block_mask, name):
-    """First-line value of a single-line ``**Name:**`` field, or None."""
-    prefix = "**{}:**".format(name)
-    for i, ln in enumerate(block_lines):
-        if not block_mask[i] and ln.startswith(prefix):
-            return ln[len(prefix):].strip()
-    return None
-
-
-def _field_text(block_lines, block_mask, name):
-    """Full text of a ``**Name:**`` field: its line plus any wrapped
-    continuation, joined with spaces. A blank line, a new field, a heading, or a
-    fence ends it."""
-    prefix = "**{}:**".format(name)
-    for i, ln in enumerate(block_lines):
-        if block_mask[i] or not ln.startswith(prefix):
-            continue
-        parts = [ln[len(prefix):]]
-        j = i + 1
-        while j < len(block_lines):
-            if block_mask[j]:
-                break
-            nxt = block_lines[j]
-            if (
-                nxt.strip() == ""
-                or eb.FIELD_LINE_RE.match(nxt)
-                or re.match(r"^#{1,6}\s", nxt)
-            ):
-                break
-            parts.append(nxt)
-            j += 1
-        return " ".join(p.strip() for p in parts).strip()
-    return ""
-
-
-def _parse_commands(text):
-    """Inline-code spans on an ``**Acceptance:**`` line are the commands."""
-    return [
-        m.group(1).strip()
-        for m in re.finditer(r"`([^`]+)`", text)
-        if m.group(1).strip()
-    ]
-
-
-def _parse_depends(text):
-    return [int(n) for n in re.findall(r"Task\s+(\d+)", text)]
-
-
-def parse_plan_tasks(plan_path):
-    """Parse every ``### Task N:`` block into a Task. Raises RuntimeError naming
-    the cause on a wrong-level task heading or a duplicate task number — never
-    guesses (DECISIONS 2026-07-11)."""
-    lines = eb.read_lines(plan_path)
-    mask = eb.fence_mask(lines)
-
-    starts = []  # (number, line_index)
-    for i, line in enumerate(lines):
-        if mask[i]:
-            continue
-        m = eb.TASK_HEADING_RE.match(line)
-        if m:
-            starts.append((int(m.group(1)), i))
-            continue
-        wl = eb.ANY_LEVEL_TASK_HEADING_RE.match(line)
-        if wl and len(wl.group(1)) != 3:
-            raise RuntimeError(
-                "task {n} heading must be '### Task {n}:' (three #), found "
-                "'{lvl} Task {n}:' at line {ln} in {p}".format(
-                    n=int(wl.group(2)), lvl=wl.group(1), ln=i + 1, p=plan_path
-                )
-            )
-    if not starts:
-        raise RuntimeError("no '### Task N:' headings found in {}".format(plan_path))
-
-    nums = [n for n, _ in starts]
-    dups = sorted({n for n in nums if nums.count(n) > 1})
-    if dups:
-        raise RuntimeError(
-            "duplicate task number(s) {} — '### Task N:' headings must be unique "
-            "in {}".format(", ".join(str(d) for d in dups), plan_path)
-        )
-
-    tasks = []
-    for num, start in starts:
-        block = eb.extract_task_block(lines, num)
-        heading = lines[start]
-        tm = re.match(r"^###\s+Task\s+\d+:\s*(.*)$", heading)
-        title = tm.group(1).strip() if tm else ""
-
-        block_lines = block.splitlines()
-        block_mask = eb.fence_mask(block_lines)
-
-        tier = _field_value(block_lines, block_mask, "Tier")
-        if tier is None:
-            raise RuntimeError("task {} is missing the **Tier:** line".format(num))
-        tier = tier.strip().lower()
-        if tier not in TIER_MAP:
-            raise RuntimeError(
-                "task {} has unknown tier {!r} — expected one of {}".format(
-                    num, tier, ", ".join(sorted(TIER_MAP))
-                )
-            )
-
-        depends_on = _parse_depends(_field_value(block_lines, block_mask, "Depends on") or "")
-        acceptance = _parse_commands(_field_text(block_lines, block_mask, "Acceptance"))
-
-        checkbox_line = -1
-        for offset, bl in enumerate(block_lines):
-            if block_mask[offset]:
-                continue
-            if re.match(r"^\s*[-*]\s*\[[ xX]\]", bl):
-                checkbox_line = start + offset
-                break
-
-        tasks.append(
-            Task(
-                number=num,
-                title=title,
-                tier=tier,
-                depends_on=depends_on,
-                acceptance_commands=acceptance,
-                checkbox_line=checkbox_line,
-            )
-        )
-    return tasks
-
-
-def order_tasks(tasks):
-    """Return tasks in dependency order (each dependency before its dependents).
-    Raises on an unknown dependency or a cycle."""
-    by_num = {t.number: t for t in tasks}
-    for t in tasks:
-        for d in t.depends_on:
-            if d not in by_num:
-                raise RuntimeError(
-                    "task {} depends on unknown task {}".format(t.number, d)
-                )
-    order = []
-    state = {}  # number -> 0 visiting, 1 done
-
-    def visit(n):
-        s = state.get(n)
-        if s == 1:
-            return
-        if s == 0:
-            raise RuntimeError("dependency cycle involving task {}".format(n))
-        state[n] = 0
-        for d in by_num[n].depends_on:
-            visit(d)
-        state[n] = 1
-        order.append(by_num[n])
-
-    for t in tasks:
-        visit(t.number)
-    return order
-
-
-_EFFORT_OVERRIDE_RE = re.compile(r"^(\d+)=(.+)$")
-
-
-def parse_effort_overrides(raw_list):
-    """Parse repeatable ``--effort N=LEVEL`` CLI entries into ``{task_number:
-    level}``. Malformed entries (not ``N=LEVEL``) or a level outside
-    ALLOWED_EFFORTS (including ``ultra``, which is prohibited at every tier)
-    raise RuntimeError naming the cause. Task-number existence against the plan
-    is validated separately by the caller, once the plan is parsed."""
-    overrides = {}
-    for item in raw_list or []:
-        m = _EFFORT_OVERRIDE_RE.match(item.strip())
-        if not m:
-            raise RuntimeError(
-                "--effort {!r} must be in the form N=LEVEL (task number and "
-                "one of {})".format(item, ", ".join(ALLOWED_EFFORTS))
-            )
-        number = int(m.group(1))
-        level = m.group(2).strip()
-        if level not in ALLOWED_EFFORTS:
-            raise RuntimeError(
-                "--effort {!r}: unknown level {!r} — expected one of {}".format(
-                    item, level, ", ".join(ALLOWED_EFFORTS)
-                )
-            )
-        overrides[number] = level
-    return overrides
+_ACC_TAIL_CHARS = forge_common._ACC_TAIL_CHARS
 
 
 # --- worker dispatch --------------------------------------------------------
@@ -458,12 +237,6 @@ def parse_verdict(last_message):
     return found
 
 
-def verdict_to_dict(verdict):
-    if verdict.kind == "pass":
-        return {"verdict": "pass"}
-    return {"verdict": "findings", "findings": list(verdict.findings)}
-
-
 def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_msg_path,
                            timeout=DEFAULT_TIMEOUT):
     """Shared plumbing for per-task and final reviewers: one ``codex exec`` call,
@@ -539,261 +312,6 @@ def dispatch_final_review(packet_path, codex_bin, run_dir, timeout=DEFAULT_TIMEO
     return _dispatch_review_call(
         model, effort, preamble, packet_path, codex_bin, last_msg_path, timeout=timeout
     )
-
-
-# --- git helpers (diff base for review packets) -----------------------------
-
-
-def _git_head(cwd):
-    """HEAD SHA of the repo at ``cwd``, or None when ``cwd`` is not a git repo
-    (git unavailable / no commits). Reviews require a repo; callers that must have
-    one raise loudly, and the plan-level final review is skipped without one."""
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.strip() or None
-
-
-def _working_tree_dirty(cwd):
-    """The working tree's dirty paths (``git status --porcelain`` lines), or ``[]``
-    when clean, or ``None`` when ``cwd`` is not a git repo. The self-ignored
-    ``.forge/`` never appears (its ``*`` gitignore). Commit discipline requires a
-    clean tree at invocation start, so ``run_plan`` halts on a non-empty list."""
-    try:
-        proc = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=cwd, capture_output=True, text=True
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
-
-
-def _git_commit_task(cwd, task):
-    """Commit this passed task's work as one slice: ``git add -A`` then
-    ``git commit -m "forge: task <N> — <title>"``. Returns the new HEAD SHA, or
-    ``None`` when nothing was staged (empty ``git diff --cached`` — e.g. a task
-    that changed no files, or a human pre-fixed the work on resume) or ``cwd`` is
-    not a git repo. Never creates an empty commit. ``.forge/`` is ignored, never
-    staged; the ledger annotation (written before this call) rides in the commit."""
-    if _git_head(cwd) is None:
-        return None
-    try:
-        add = subprocess.run(
-            ["git", "add", "-A"], cwd=cwd, capture_output=True, text=True
-        )
-        if add.returncode != 0:
-            raise RuntimeError(
-                "git add -A for task {} failed in {}: {}".format(
-                    task.number, cwd, add.stderr.strip()
-                )
-            )
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"], cwd=cwd,
-            capture_output=True, text=True,
-        )
-        if staged.returncode == 0:
-            return None  # nothing staged -> skip, no empty commit
-        msg = "forge: task {} — {}".format(task.number, task.title)
-        commit = subprocess.run(
-            ["git", "commit", "-m", msg], cwd=cwd, capture_output=True, text=True
-        )
-    except OSError:
-        return None
-    if commit.returncode != 0:
-        raise RuntimeError(
-            "git commit for task {} failed in {}: {}".format(
-                task.number, cwd, commit.stderr.strip()
-            )
-        )
-    return _git_head(cwd)
-
-
-def _git_diff(cwd, base):
-    """``git diff <base>`` in ``cwd``. Raises RuntimeError naming the cause on a
-    git failure (a packet-generation error — halt per the Halt spec)."""
-    proc = subprocess.run(
-        ["git", "diff", base], cwd=cwd, capture_output=True, text=True
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "git diff {} failed in {}: {}".format(base, cwd, proc.stderr.strip())
-        )
-    return proc.stdout
-
-
-def _packet_for(task, plan_path, run_dir, base, cwd):
-    """Per-task review packet via review-packet.py: the task block + ``git diff
-    <base>``. Missing task block raises (fail-loud)."""
-    with open(plan_path, "r", encoding="utf-8") as f:
-        plan_text = f.read()
-    block = rp.extract_task_block(plan_text, task.number)
-    if block is None:
-        raise RuntimeError(
-            "review packet: " + rp.diagnose_missing_task(plan_text, task.number, plan_path)
-        )
-    diff = _git_diff(cwd, base)
-    packet = rp.build_packet(block, base, diff)
-    path = os.path.join(run_dir, "task-{}-review.md".format(task.number))
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(packet)
-    return path
-
-
-def _final_packet(spec_path, base, diff, run_dir):
-    """Whole-plan final-review packet: the spec + the whole-plan ``git diff
-    <base>``, assembled by review-packet.py's fence-safe builder."""
-    with open(spec_path, "r", encoding="utf-8") as f:
-        spec_text = f.read()
-    packet = rp.build_packet(spec_text, base, diff)
-    path = os.path.join(run_dir, "final-review.md")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(packet)
-    return path
-
-
-# --- receipts & ledger ------------------------------------------------------
-
-
-def write_receipt(run_dir, task, attempt, receipt_dict):
-    os.makedirs(run_dir, exist_ok=True)
-    path = os.path.join(run_dir, "task-{}-attempt-{}.json".format(task.number, attempt))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(receipt_dict, f, indent=2)
-    return path
-
-
-def _read_base_commit(run_dir):
-    """The ``base_commit`` persisted in an existing ``run.json`` (first-invocation
-    HEAD, the whole-plan final-review diff base), or ``None`` when there is no
-    prior run.json — so a resume reuses the original base rather than a HEAD that
-    has advanced past already-committed tasks."""
-    path = os.path.join(run_dir, "run.json")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f).get("base_commit")
-    except (OSError, ValueError):
-        return None
-
-
-def _read_run_tasks(run_dir):
-    """The ``tasks`` list from an existing ``run.json`` (used on resume to carry
-    a passed task's recorded commit SHA forward), or ``None`` when absent."""
-    path = os.path.join(run_dir, "run.json")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f).get("tasks")
-    except (OSError, ValueError):
-        return None
-
-
-def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_commit):
-    os.makedirs(run_dir, exist_ok=True)
-    data = {
-        "plan": os.path.abspath(plan_path),
-        "spec": os.path.abspath(spec_path),
-        "status": status,
-        "base_commit": base_commit,
-        "tasks": task_summaries,
-    }
-    path = os.path.join(run_dir, "run.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    return path
-
-
-def write_final_review_receipt(run_dir, verdict):
-    """Persist the plan-level final-review verdict alongside the task receipts."""
-    os.makedirs(run_dir, exist_ok=True)
-    path = os.path.join(run_dir, "final-review.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(verdict_to_dict(verdict), f, indent=2)
-    return path
-
-
-_ATTEMPT_RE = re.compile(r"^task-(\d+)-attempt-(\d+)\.json$")
-
-
-def _read_latest_receipt(run_dir, task_number):
-    """The highest-attempt receipt dict for a task in ``run_dir``, or None. The
-    receipts are the only resume state — no separate store (Resume spec)."""
-    if not os.path.isdir(run_dir):
-        return None
-    best_attempt = -1
-    best_name = None
-    for name in os.listdir(run_dir):
-        m = _ATTEMPT_RE.match(name)
-        if m and int(m.group(1)) == task_number and int(m.group(2)) > best_attempt:
-            best_attempt = int(m.group(2))
-            best_name = name
-    if best_name is None:
-        return None
-    with open(os.path.join(run_dir, best_name), "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def latest_status(run_dir, task_number):
-    """Latest receipt status for a task (``passed`` | ``rework`` | ``escalated``),
-    or None when the task has no receipt yet."""
-    receipt = _read_latest_receipt(run_dir, task_number)
-    return receipt.get("status") if receipt else None
-
-
-def _clear_task_receipts(run_dir, task_number):
-    """Remove a task's prior receipts, plus its stale reviewer last-message file,
-    so a re-run writes a clean attempt sequence (attempt-1, attempt-2) and can
-    never re-read a prior run's verdict — the reviewer call also clears the file,
-    this closes the gap on resume when the reviewer is never reached."""
-    if not os.path.isdir(run_dir):
-        return
-    for name in os.listdir(run_dir):
-        m = _ATTEMPT_RE.match(name)
-        if m and int(m.group(1)) == task_number:
-            os.remove(os.path.join(run_dir, name))
-    stale_review = os.path.join(run_dir, "task-{}-review-last.txt".format(task_number))
-    if os.path.exists(stale_review):
-        os.remove(stale_review)
-
-
-def ensure_forge_gitignore(cwd):
-    """Self-ignoring ``.forge/.gitignore`` containing ``*`` — no target-repo
-    setup required (Receipts spec, 2026-07-13 amendment). Idempotent: only
-    written if absent."""
-    forge_dir = os.path.join(cwd, ".forge")
-    os.makedirs(forge_dir, exist_ok=True)
-    path = os.path.join(forge_dir, ".gitignore")
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("*\n")
-    return path
-
-
-def annotate_ledger(plan_path, task, status_line):
-    """Append ``— <status_line>`` to the task's plan checkbox line. Only a
-    passed outcome checks the box (``[x] ... — passed, N attempt(s)``); an
-    escalated outcome (``status_line`` starting with ``escalated``) leaves the
-    checkbox unchecked. Idempotent: replaces any prior annotation and prior
-    check state."""
-    if task.checkbox_line < 0:
-        return
-    with open(plan_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    lines = content.splitlines(keepends=True)
-    raw = lines[task.checkbox_line]
-    nl = "\n" if raw.endswith("\n") else ""
-    body = raw[: len(raw) - len(nl)] if nl else raw
-    box = "[ ]" if status_line.startswith("escalated") else "[x]"
-    body = re.sub(r"\[[ xX]\]", box, body, count=1)
-    body = re.sub(r"\s+—\s.*$", "", body)
-    lines[task.checkbox_line] = body + " — " + status_line + nl
-    with open(plan_path, "w", encoding="utf-8") as f:
-        f.write("".join(lines))
 
 
 # --- per-task execution & plan loop -----------------------------------------
