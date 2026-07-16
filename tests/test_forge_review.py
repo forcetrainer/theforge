@@ -345,7 +345,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertTrue(t1.get("started_at"))
         self.assertTrue(t1.get("ended_at"))
 
-    def test_run_start_announces_monitor_command(self):
+    def test_run_start_announces_short_monitor_command_and_writes_launcher(self):
         plan = self._plan(PLAN_STD)
         self._init_repo()
         res = self._run(plan, responses=[
@@ -353,8 +353,16 @@ class ReviewLoopTests(unittest.TestCase):
             {"exit": 0, "msg": _pass_msg()},
         ])
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("monitor:", res.stdout)
-        self.assertIn("forge-monitor.py", res.stdout)
+        # short one-token command (no long plugin path that would line-wrap)
+        self.assertIn("sh .forge/watch", res.stdout)
+        self.assertNotIn("forge-monitor.py", res.stdout)
+        # the launcher itself carries the real path + --follow
+        watch = os.path.join(self.d, ".forge", "watch")
+        self.assertTrue(os.path.exists(watch))
+        with open(watch) as f:
+            content = f.read()
+        self.assertIn("forge-monitor.py", content)
+        self.assertIn("--follow", content)
 
 
 class ReviewNonGitTests(unittest.TestCase):

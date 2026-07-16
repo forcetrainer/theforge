@@ -105,13 +105,13 @@ human-readable record (`— passed, N attempt(s)` / `— escalated: <one-liner>`
   ```
 
   Prints the run state (`RUNNING` | `COMPLETED` | `HALTED — <reason>` | `CONTRACT-ERROR — <cause>`) and one line per task, from `run.json` + receipts; dispatches nothing, exits 0.
-- **Live monitor** (optional, second terminal): the runner prints a `monitor:` command at start. Run it to watch a `rich` TUI — the plan ledger with the in-flight task lit and its `codex exec` stream scrolling, plus a terminal-state banner on completion/halt:
+- **Live monitor** (optional, second terminal): a full-screen `rich` TUI — the plan ledger with the in-flight task lit and its `codex exec` stream scrolling, plus a terminal-state banner on completion/halt. Best used as a **standing monitor**: leave it open once and it attaches to every run. The runner writes a `.forge/watch` launcher and prints a short command at start:
 
   ```bash
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-monitor.py" --latest   # or --run-dir .forge/runs/<name>
+  sh .forge/watch      # forge-monitor.py --follow — newest run, auto-attaches to each new run
   ```
 
-  Read-only over the run dir (dispatches nothing); needs `rich` (`pip install rich`). A killed runner renders as `stalled?` (heartbeat + pid), not a stuck spinner. This is a passive view — it does **not** replace foreground halt-relay; the orchestrator still runs the runner in the foreground.
+  One-shot forms: `--latest` (newest run, then exit) or `--run-dir .forge/runs/<name>`. Read-only over the run dir (dispatches nothing); needs `rich` (`pip install rich`). A killed runner renders as `stalled?` (heartbeat + pid), not a stuck spinner. This is a passive view — it does **not** replace foreground halt-relay; the orchestrator still runs the runner in the foreground.
 
 **In-session Codex subagents remain acceptable outside plan execution** —
 ad-hoc exploration, one-off review, anything that isn't dispatched by the

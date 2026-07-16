@@ -175,13 +175,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md> --
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" --status --run-dir .forge/runs/<name>
 ```
 
-**Live monitor (optional).** For a live view, the runner prints a `monitor:` command at start; run it in a second terminal to watch a `rich` TUI — the plan ledger with the in-flight task lit, that task's `codex exec` output scrolling, and a full-width banner when the run completes or halts:
+**Live monitor (optional).** For a live view, run the monitor in a second terminal — a full-screen `rich` TUI showing the plan ledger with the in-flight task lit, that task's `codex exec` output scrolling, and a full-width banner when the run completes or halts. The recommended shape is a **standing monitor**: leave it open once and it attaches to every run.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-monitor.py" --latest   # or --run-dir .forge/runs/<name>
+sh .forge/watch      # standing monitor (forge-monitor.py --follow); the runner prints this at start
 ```
 
-It only reads the run dir (dispatches nothing) and needs `rich` (`pip install rich`); a killed runner shows as `stalled?` rather than a stuck spinner. `--status` above stays the zero-dependency peek.
+`--follow` watches the newest run and auto-flips to each new run as it starts, so there's no per-run step; the runner writes the `.forge/watch` launcher and prints the short command (`monitor: sh .forge/watch`) so there's no long path to copy. One-shot forms also exist: `forge-monitor.py --latest` (newest run, then exit) or `--run-dir .forge/runs/<name>`. It only reads the run dir (dispatches nothing) and needs `rich` (`pip install rich`); a killed runner shows as `stalled?` rather than a stuck spinner. `--status` above stays the zero-dependency peek.
 
 See `skills/planning/codex-execution.md` for the invocation contract,
 halt/resume, and the orchestrator's reduced role. Receipts land in

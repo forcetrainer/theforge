@@ -107,6 +107,7 @@ from forge_receipts import (  # noqa: F401
     write_final_review_receipt,
     write_receipt,
     write_run_json,
+    write_watch_launcher,
 )
 
 
@@ -545,8 +546,10 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
     # along so a resume still reads it; started_at/pid feed the monitor.
     write_run_json(run_dir, plan_path, spec_path, "running", task_summaries, run_base,
                    started_at=run_started, pid=run_pid)
-    print("monitor: python scripts/forge-monitor.py --run-dir {}".format(run_dir),
-          flush=True)
+    # Drop a short launcher for the standing monitor and print a one-token command
+    # (a long absolute path line-wraps in the session and is hard to run).
+    write_watch_launcher(cwd, os.path.join(SCRIPTS_DIR, "forge-monitor.py"))
+    print("monitor: sh .forge/watch   (if not already watching)", flush=True)
 
     # order_tasks yields dependency order (each dependency before its dependents)
     # and the loop breaks on the first escalation, so a dependent is never reached
