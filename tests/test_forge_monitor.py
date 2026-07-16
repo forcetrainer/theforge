@@ -151,7 +151,8 @@ class RenderTests(unittest.TestCase):
 
     def test_stalled_running_shows_stalled_and_no_banner(self):
         with tempfile.TemporaryDirectory() as d:
-            _write_run(d)
+            # No live pid + a quiet heartbeat (now far ahead) = a dead runner.
+            _write_run(d, pid=None)
             state = forge_status.read_run_state(d, now=__import__("time").time() + 10000)
             out = _render(state)
             self.assertIn("STALLED?", out)
@@ -169,6 +170,60 @@ class RenderTests(unittest.TestCase):
                 "updated_at": None, "stale": False, "tasks": [],
             }
             _render(state)  # no exception
+
+
+class TerminalAndBannerTests(unittest.TestCase):
+    def test_stale_running_is_not_terminal(self):
+        # A stale running run must NOT end the watch — the cutoff can trip on a
+        # long quiet-but-healthy phase; exiting would abandon a live run.
+        self.assertFalse(forge_monitor._is_terminal({"state": "running", "stale": True}))
+        for s in ("completed", "halted", "contract-error"):
+            self.assertTrue(forge_monitor._is_terminal({"state": s, "stale": False}))
+
+    def test_completed_without_review_omits_review_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            tasks = _base_tasks()
+            for t in tasks:
+                t["status"] = "passed"
+            _write_run(d, status="passed", current_task=None, current_phase=None, tasks=tasks)
+            out = _render(forge_status.read_run_state(d))
+            self.assertIn("RUN COMPLETE", out)
+            self.assertNotIn("review clean", out)
+
+    def test_completed_with_passing_review_shows_review_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            tasks = _base_tasks()
+            for t in tasks:
+                t["status"] = "passed"
+            _write_run(d, status="passed", current_task=None, current_phase=None, tasks=tasks)
+            with open(os.path.join(d, "final-review.json"), "w") as f:
+                json.dump({"verdict": "pass"}, f)
+            out = _render(forge_status.read_run_state(d))
+            self.assertIn("review clean", out)
+
+    def test_final_review_halt_surfaces_verdict_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            tasks = _base_tasks()
+            for t in tasks:
+                t["status"] = "passed"
+            _write_run(d, status="escalated-final-review", current_task=None,
+                       current_phase=None, tasks=tasks)
+            with open(os.path.join(d, "final-review.json"), "w") as f:
+                json.dump({"verdict": "findings",
+                           "findings": ["integration: elapsed drops on resume"]}, f)
+            out = _render(forge_status.read_run_state(d))
+            self.assertIn("HALTED", out)
+            self.assertIn("final review", out.lower())
+            self.assertIn("elapsed drops on resume", out)
+
+    def test_interrupted_task_not_spun_under_terminal_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            # task 2 is mid-flight ("running") when a contract error strikes
+            _write_run(d, status="contract-error", current_task=None,
+                       current_phase=None, contract_error="reviewer crashed")
+            out = _render(forge_status.read_run_state(d))
+            self.assertIn("CONTRACT ERROR", out)
+            self.assertIn("interrupted", out)
 
 
 class CliTests(unittest.TestCase):

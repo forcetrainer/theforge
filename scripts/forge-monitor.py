@@ -121,10 +121,16 @@ def _ledger_panel(state, now, frame):
     table.add_column(justify="left")
     table.add_column(justify="left")
     table.add_column(justify="right")
+    run_terminal = state["state"] in ("completed", "halted", "contract-error")
     for t in tasks:
         st = t.get("status")
         glyph, color = _GLYPH.get(st, ("·", DIM))
-        if st == "running":
+        if st == "running" and run_terminal:
+            # The run ended mid-task (e.g. a contract error) — don't animate a
+            # spinner under a terminal banner; show the task as interrupted.
+            glyph, color, phase = "·", DIM, "interrupted"
+            st = "interrupted"
+        elif st == "running":
             glyph = frame
             phase = (state.get("current_phase") or "running")
         else:
@@ -173,9 +179,13 @@ def _banner(state, now):
     started = forge_status._parse_iso(state.get("started_at"))
     elapsed = _fmt_elapsed(now - started if started else None)
     st = state["state"]
+    review = state.get("final_review")
     if st == "completed":
-        line = Text("✓ RUN COMPLETE — {}/{} tasks passed · review clean · {}     press q to exit"
-                    .format(passed, total, elapsed), style=Style(color="#08160c", bold=True))
+        # Only claim "review clean" when a final review actually ran and passed;
+        # an empty-diff or non-git run skips the reviewer entirely.
+        review_note = " · review clean" if (review and review.get("verdict") == "pass") else ""
+        line = Text("✓ RUN COMPLETE — {}/{} tasks passed{} · {}     press q to exit"
+                    .format(passed, total, review_note, elapsed), style=Style(color="#08160c", bold=True))
         return Panel(line, box=box.HEAVY, style="on {}".format(GREEN), border_style=GREEN)
     if st == "halted":
         esc = next((t for t in tasks if t.get("status") == "escalated"), None)
@@ -183,7 +193,11 @@ def _banner(state, now):
             n, k, finding = esc.get("number"), esc.get("attempts") or 0, esc.get("finding")
             head = "■ HALTED — task {} escalated after {} attempts     press q to exit".format(n, k)
         else:
-            head, finding = "■ HALTED — {}     press q to exit".format(state.get("reason") or ""), None
+            # Final-review escalation: no escalated task; the finding lives on the
+            # final-review verdict, not a task receipt.
+            head = "■ HALTED — {}     press q to exit".format(state.get("reason") or "")
+            findings = (review or {}).get("findings") if review else None
+            finding = findings[0] if findings else None
         ink = Style(color="#1c0d07", bold=True)
         lines = [Text(head, style=ink)]
         if finding:
@@ -210,8 +224,11 @@ def _render(state, log_lines, now=None, frame="⠙"):
 
 
 def _is_terminal(state):
-    return state["state"] in ("completed", "halted", "contract-error") or (
-        state["state"] == "running" and state.get("stale"))
+    # Only a terminal run.json status ends the watch. A stale `running` run is NOT
+    # terminal — the monitor keeps polling and shows `stalled?`, because the cutoff
+    # can trip on a long silent (but healthy) phase; exiting would abandon a live
+    # run. A genuinely dead run just stays on `stalled?` until the user quits.
+    return state["state"] in ("completed", "halted", "contract-error")
 
 
 def _current_log_path(run_dir, state):
@@ -223,10 +240,35 @@ def _current_log_path(run_dir, state):
     return None
 
 
+def _wait_for_quit():  # pragma: no cover - interactive
+    """Block until the user presses q (or Ctrl-C) so the final frame + banner
+    stay on screen. No-op when stdin isn't a TTY (piped/non-interactive)."""
+    if not sys.stdin.isatty():
+        return
+    try:
+        import termios
+        import tty
+    except ImportError:
+        return
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if not ch or ch.lower() == "q" or ch == "\x03":
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
 def _watch(run_dir, poll):  # pragma: no cover - interactive Live loop
     console = Console()
     log_lines_cap = max(8, console.size.height - 16)
     fi = 0
+    terminal = False
     with Live(console=console, refresh_per_second=10, screen=False) as live:
         while True:
             state = forge_status.read_run_state(run_dir)
@@ -238,8 +280,12 @@ def _watch(run_dir, poll):  # pragma: no cover - interactive Live loop
             lines = _tail(log_path, log_lines_cap) if log_path else []
             live.update(_render(state, lines, frame=frame))
             if _is_terminal(state):
+                terminal = True
                 break
             time.sleep(poll)
+    # Keep the final frame + banner up until the operator dismisses it.
+    if terminal:
+        _wait_for_quit()
     return 0
 
 

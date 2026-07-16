@@ -710,10 +710,15 @@ def main(argv=None):
         # unaffected (the error may have struck mid-run, after tasks committed).
         if os.path.isdir(run_dir):
             try:
+                # Preserve the run's started_at (monitor elapsed) and record the
+                # current pid; omitting current_task/current_phase clears the live
+                # pointer so the monitor paints the contract-error banner and stops
+                # the spinner rather than freezing a task mid-flight.
                 write_run_json(
                     run_dir, args.plan, args.spec, "contract-error",
                     _read_run_tasks(run_dir) or [], _read_base_commit(run_dir),
                     contract_error=str(e),
+                    started_at=_read_started_at(run_dir), pid=os.getpid(),
                 )
             except OSError:
                 pass

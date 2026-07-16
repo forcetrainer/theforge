@@ -76,24 +76,44 @@ def _parse_iso(value):
 
 
 def _is_stale(state, run_dir, updated_at, pid, now):
-    """A `running` run is stale when its heartbeat (newest of ``updated_at`` and the
-    run dir's newest file mtime) predates STALE_CUTOFF_S, or when ``pid`` is present
-    but dead. Terminal states are never stale."""
+    """Whether a `running` run looks dead. Two independent liveness signals, each
+    able to clear staleness (a `codex exec` phase can reason silently for minutes,
+    so neither alone is sufficient):
+
+    - Heartbeat: newest of ``updated_at`` and the run dir's newest file mtime. A
+      heartbeat within STALE_CUTOFF_S means something is still writing → alive.
+    - Pid: consulted only once the heartbeat has gone quiet. A live pid rescues a
+      quiet-but-working run (spec: pid confirms); a dead pid confirms death; an
+      unprobeable pid (cross-namespace/unusable) leaves the quiet heartbeat to
+      govern → stale. Terminal states are never stale."""
     if state != "running":
         return False
     now_ts = time.time() if now is None else now
     candidates = [v for v in (_parse_iso(updated_at), _latest_mtime(run_dir)) if v]
     heartbeat = max(candidates) if candidates else 0.0
-    if now_ts - heartbeat > STALE_CUTOFF_S:
-        return True
+    if now_ts - heartbeat <= STALE_CUTOFF_S:
+        return False  # fresh heartbeat — reliably alive
     if pid is not None:
         try:
             os.kill(int(pid), 0)
+            return False  # process alive despite a quiet phase — not stale
         except ProcessLookupError:
-            return True
-        except (PermissionError, ValueError, OverflowError, TypeError):
-            pass  # exists-but-not-ours / unusable pid — heartbeat governs
-    return False
+            return True  # process gone — dead
+        except PermissionError:
+            return False  # exists but not ours — alive
+        except (ValueError, OverflowError, TypeError):
+            return True  # unusable pid — quiet heartbeat governs
+    return True  # quiet heartbeat, no pid to consult
+
+
+def _read_final_review(run_dir):
+    """The plan-level final-review verdict dict (``{"verdict": ...}``) from
+    ``final-review.json``, or None when no final review has run."""
+    try:
+        with open(os.path.join(run_dir, "final-review.json"), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def _truncate(text):
@@ -173,6 +193,7 @@ def read_run_state(run_dir, now=None):
         "started_at": started_at,
         "updated_at": updated_at,
         "stale": _is_stale(state, run_dir, updated_at, pid, now),
+        "final_review": _read_final_review(run_dir),
         "tasks": tasks,
     }
 

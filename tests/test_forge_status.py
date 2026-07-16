@@ -396,11 +396,20 @@ class ProgressFieldsTests(unittest.TestCase):
             st = forge_status.read_run_state(d, now=time.time() + 10000)
             self.assertTrue(st["stale"])
 
-    def test_dead_pid_forces_stale_despite_fresh_heartbeat(self):
+    def test_dead_pid_with_quiet_heartbeat_is_stale(self):
         with tempfile.TemporaryDirectory() as d:
             self._write_ex(d, "running", [_summary(1, "passed")], pid=_dead_pid())
-            st = forge_status.read_run_state(d, now=time.time())
+            # heartbeat quiet (now far ahead) AND pid dead -> confirmed dead
+            st = forge_status.read_run_state(d, now=time.time() + 10000)
             self.assertTrue(st["stale"])
+
+    def test_live_pid_rescues_quiet_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            # heartbeat quiet (now far ahead) but the runner pid is alive (ours) —
+            # a long silent codex-exec phase must NOT read as stalled.
+            self._write_ex(d, "running", [_summary(1, "passed")], pid=os.getpid())
+            st = forge_status.read_run_state(d, now=time.time() + 10000)
+            self.assertFalse(st["stale"])
 
     def test_terminal_states_never_stale(self):
         with tempfile.TemporaryDirectory() as d:
