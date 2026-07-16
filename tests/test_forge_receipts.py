@@ -46,6 +46,16 @@ class WriteRunJsonProgressTests(unittest.TestCase):
         for k in ("current_task", "current_phase", "started_at", "updated_at", "pid"):
             self.assertNotIn(k, data)
 
+    def test_write_watch_launcher(self):
+        d = self._dir()
+        p = forge_run.write_watch_launcher(d, "/abs/scripts/forge-monitor.py")
+        self.assertEqual(p, os.path.join(d, ".forge", "watch"))
+        with open(p) as f:
+            content = f.read()
+        self.assertIn("/abs/scripts/forge-monitor.py", content)
+        self.assertIn("--follow", content)
+        self.assertTrue(os.access(p, os.X_OK))
+
 
 class AnnotateLedgerTests(unittest.TestCase):
     def test_checks_box_and_appends_status(self):

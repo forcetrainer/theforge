@@ -310,6 +310,38 @@ def _watch(run_dir, poll):  # pragma: no cover - interactive Live loop
     return 0
 
 
+def _waiting_panel():
+    return Panel(Text("waiting for a forge run…   (.forge/runs/)", style=DIM),
+                 title="FORGE RUN", title_align="left", border_style=EDGE,
+                 box=box.SQUARE, padding=(0, 1))
+
+
+def _follow(poll):  # pragma: no cover - interactive Live loop
+    """Standing monitor: never exits on its own. Each tick it re-picks the newest
+    run under .forge/runs/ and renders it — so an active run shows live, a finished
+    run's final frame stays up until a *newer* run appears, at which point it flips
+    to that one automatically. Ctrl-C quits. This is what you leave open in a second
+    pane so every runner invocation is picked up with no per-run step."""
+    console = Console()
+    fi = 0
+    with Live(console=console, screen=True, auto_refresh=False) as live:
+        while True:
+            run_dir = _latest_run_dir()
+            state = forge_status.read_run_state(run_dir) if run_dir else None
+            if state is None:
+                live.update(_waiting_panel(), refresh=True)
+                time.sleep(max(poll, 1.0))
+                continue
+            frame = _SPINNER[fi % len(_SPINNER)]
+            fi += 1
+            log_path = _current_log_path(run_dir, state)
+            cap = _live_capacity(console.size.height, state)
+            lines = _tail(log_path, cap) if log_path else []
+            live.update(_render(state, lines, frame=frame), refresh=True)
+            time.sleep(poll)
+    return 0
+
+
 def main(argv=None):
     if not _HAVE_RICH:
         print("forge-monitor requires 'rich' — install: pip install rich", file=sys.stderr)
@@ -319,13 +351,18 @@ def main(argv=None):
         description="Read-only live TUI for a forge-run execution.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--run-dir", help="the run dir to watch (.forge/runs/<stamp>)")
+    group.add_argument("--run-dir", help="watch one run dir (.forge/runs/<stamp>)")
     group.add_argument("--latest", action="store_true",
-                       help="watch the newest run under .forge/runs/")
+                       help="watch the newest run under .forge/runs/, then exit")
+    group.add_argument("--follow", action="store_true",
+                       help="standing monitor: watch the newest run and auto-attach "
+                       "to each new run as it starts (leave open in a second pane)")
     parser.add_argument("--poll", type=float, default=0.1,
                         help="seconds between state refreshes (default: 0.1)")
     args = parser.parse_args(argv)
 
+    if args.follow:
+        return _follow(args.poll)
     run_dir = args.run_dir if args.run_dir else _latest_run_dir()
     if not run_dir or forge_status.read_run_state(run_dir) is None:
         print("no run at {}".format(run_dir), file=sys.stderr)

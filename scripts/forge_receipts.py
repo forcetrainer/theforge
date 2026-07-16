@@ -177,6 +177,24 @@ def ensure_forge_gitignore(cwd):
     return path
 
 
+def write_watch_launcher(cwd, monitor_path):
+    """Write ``.forge/watch`` — a one-line launcher for the standing monitor
+    (`forge-monitor.py --follow`) with the monitor's absolute path baked in, so the
+    runner can print a short `sh .forge/watch` instead of a long plugin path that
+    line-wraps in the session and is hard to click/copy. Idempotent; `.forge/` is
+    gitignored, so the launcher never dirties the tree."""
+    forge_dir = os.path.join(cwd or ".", ".forge")
+    os.makedirs(forge_dir, exist_ok=True)
+    path = os.path.join(forge_dir, "watch")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('#!/bin/sh\nexec python3 "{}" --follow "$@"\n'.format(monitor_path))
+    try:
+        os.chmod(path, 0o755)
+    except OSError:
+        pass
+    return path
+
+
 def annotate_ledger(plan_path, task, status_line):
     """Append ``— <status_line>`` to the task's plan checkbox line. Only a
     passed outcome checks the box (``[x] ... — passed, N attempt(s)``); an

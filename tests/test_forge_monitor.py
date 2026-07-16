@@ -268,6 +268,10 @@ class CliTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             forge_monitor.main([])
 
+    def test_follow_and_latest_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            forge_monitor.main(["--follow", "--latest"])
+
 
 if __name__ == "__main__":
     unittest.main()
