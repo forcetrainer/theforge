@@ -145,3 +145,7 @@ Stale `running` (heartbeat past cutoff, pid dead/absent): not a banner — the t
 - A `forge-run.py` run over a multi-task plan is watchable end-to-end in a second terminal: task ledger advances, the in-flight task streams live, and completion/halt paints the banner.
 - Killing the runner mid-task makes the monitor show `stalled?` within the cutoff, not a perpetual live spinner.
 - All existing forge-run tests stay green (tee is behavior-preserving for exit codes, tails, and timeouts).
+
+## Changelog
+
+2026-07-15: Built (Phase 9). Final-review hardening from the integration review: `stale` is display-only (`stalled?`), never a terminal/exit condition — the monitor keeps polling so a long silent-but-healthy phase isn't abandoned; `_is_stale` made bidirectional (a fresh heartbeat or live pid clears staleness, per the pid-confirms contract); the final-review halt banner surfaces the verdict's finding from `final-review.json`; the completed banner claims "review clean" only when a final review actually ran and passed; a task left mid-flight by a contract error renders `interrupted`, not a frozen spinner; the monitor blocks on `q`/Ctrl-C after a terminal state.
