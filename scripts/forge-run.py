@@ -518,7 +518,24 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
     run_started = _read_started_at(run_dir) or utc_iso()
     run_pid = os.getpid()
 
-    task_summaries = []
+    # Seed the full task roster (dependency order) as `queued` so run.json is a
+    # complete, self-contained record the monitor renders — queued tasks included —
+    # then update each entry in place as it runs. summary_by_num indexes the same
+    # dict objects for O(1) update.
+    task_summaries = [
+        {
+            "number": t.number,
+            "title": t.title,
+            "tier": t.tier,
+            "status": "queued",
+            "attempts": 0,
+            "commit": None,
+            "started_at": None,
+            "ended_at": None,
+        }
+        for t in order
+    ]
+    summary_by_num = {s["number"]: s for s in task_summaries}
     overall = "passed"
     escalated = False
 
@@ -535,44 +552,40 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
     # and the loop breaks on the first escalation, so a dependent is never reached
     # unless every dependency already passed — no separate depends-on guard needed.
     for task in order:
+        summary = summary_by_num[task.number]
         if latest_status(run_dir, task.number) == "passed":
             # Resume: a prior invocation already completed this task.
             prior = _read_latest_receipt(run_dir, task.number) or {}
             prior_summary = prior_tasks.get(task.number, {})
-            task_summaries.append(
-                {
-                    "number": task.number,
-                    "title": task.title,
-                    "tier": task.tier,
-                    "status": "passed",
-                    "attempts": prior.get("attempt", 1),
-                    "commit": prior_commits.get(task.number),
-                    "started_at": prior_summary.get("started_at"),
-                    "ended_at": prior_summary.get("ended_at"),
-                }
-            )
+            summary.update({
+                "status": "passed",
+                "attempts": prior.get("attempt", 1),
+                "commit": prior_commits.get(task.number),
+                "started_at": prior_summary.get("started_at"),
+                "ended_at": prior_summary.get("ended_at"),
+            })
             continue
 
         _clear_task_receipts(run_dir, task.number)
         print("task {}: {} — starting".format(task.number, task.title), flush=True)
         task_started = utc_iso()
+        # Mark the task `running` with its start time so the monitor lights the row
+        # and shows live per-task elapsed (its summary is otherwise `queued` until
+        # it completes).
+        summary.update({"status": "running", "started_at": task_started})
+        write_run_json(run_dir, plan_path, spec_path, "running", task_summaries,
+                       run_base, started_at=run_started, pid=run_pid)
         outcome = execute_task(
             task, plan_path, spec_path, run_dir, codex_bin, cwd,
             effort_override=effort_overrides.get(task.number), timeout=timeout,
         )
         print("task {}: {} ({} attempt(s))".format(
             task.number, outcome.status, outcome.attempts), flush=True)
-        summary = {
-            "number": task.number,
-            "title": task.title,
-            "tier": task.tier,
+        summary.update({
             "status": outcome.status,
             "attempts": outcome.attempts,
-            "commit": None,
-            "started_at": task_started,
             "ended_at": utc_iso(),
-        }
-        task_summaries.append(summary)
+        })
         if outcome.status == "passed":
             annotate_ledger(
                 plan_path, task, "passed, {} attempt(s)".format(outcome.attempts)

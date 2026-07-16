@@ -125,7 +125,7 @@ def read_run_state(run_dir, now=None) -> dict   # now defaults to time.time()
 **Depends on:** Task 1, Task 2
 
 ### Task 4: Monitor TUI
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Create: `scripts/forge-monitor.py`

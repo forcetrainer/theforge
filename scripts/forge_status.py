@@ -139,6 +139,10 @@ def read_run_state(run_dir, now=None):
                 "status": s.get("status"),
                 "attempts": s.get("attempts", 1),
                 "finding": finding,
+                "title": s.get("title"),
+                "tier": s.get("tier"),
+                "started_at": s.get("started_at"),
+                "ended_at": s.get("ended_at"),
             }
         )
 
@@ -160,6 +164,7 @@ def read_run_state(run_dir, now=None):
 
     return {
         "run_dir": run_dir,
+        "plan": run.get("plan") if run else None,
         "state": state,
         "reason": reason,
         "latest_mtime": _latest_mtime(run_dir),
