@@ -44,11 +44,9 @@ TIER_MAP = {
     "complex": ("gpt-5.6-sol", "medium"),
 }
 TIER_ORDER = ("trivial", "standard", "complex")  # ascending; index gives rank
-# Reviewer routing; trivial tier has no reviewer.
-REVIEW_MAP = {
-    "standard": ("gpt-5.6-terra", "high"),
-    "complex": ("gpt-5.6-sol", "high"),
-}
+# Reviewer routing reads TIER_MAP directly (reviewer tier = task tier; the
+# once-separate reviewer table is retired to remove the stale-drift hazard of
+# two tier tables silently diverging on a model-churn edit).
 # Worker contract source per tier — agents/*.md body (frontmatter stripped),
 # single source shared with the Claude Code harness.
 CONTRACT_AGENT = {

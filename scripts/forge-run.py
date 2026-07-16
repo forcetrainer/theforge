@@ -67,9 +67,9 @@ from forge_common import (  # noqa: F401
     CONTRACT_AGENT,
     DEFAULT_TIMEOUT,
     MAX_ATTEMPTS,
-    REVIEW_MAP,
     REVIEW_VERDICT_INSTRUCTION,
     TIER_MAP,
+    TIER_ORDER,
     AcceptanceResult,
     Task,
     TaskOutcome,
@@ -302,10 +302,11 @@ def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_
 
 
 def dispatch_reviewer(task, packet_path, codex_bin, run_dir, timeout=DEFAULT_TIMEOUT):
-    """Per-task reviewer via ``codex exec`` routed by REVIEW_MAP[tier] (standard ->
-    terra/high, complex -> sol/high). Preamble = the tier agent's review paragraph.
-    Returns the parsed Verdict."""
-    model, effort = REVIEW_MAP[task.tier]
+    """Per-task reviewer via ``codex exec`` — fresh context at the *same tier as
+    the task it reviews* (routed by TIER_MAP[task.tier]; reviewer strength never
+    escalates past the task's own tier). Preamble = the tier agent's review
+    paragraph. Returns the parsed Verdict."""
+    model, effort = TIER_MAP[task.tier]
     preamble = contract_preamble(task.tier)
     last_msg_path = os.path.join(run_dir, "task-{}-review-last.txt".format(task.number))
     live_path = os.path.join(run_dir, "task-{}-live.log".format(task.number))
@@ -316,12 +317,13 @@ def dispatch_reviewer(task, packet_path, codex_bin, run_dir, timeout=DEFAULT_TIM
     )
 
 
-def dispatch_final_review(packet_path, codex_bin, run_dir, timeout=DEFAULT_TIMEOUT):
-    """Whole-plan final review: one sol/high ``codex exec`` call (REVIEW_MAP[
-    'complex']) with the forge-deep final-integration-review preamble against the
-    whole-plan diff + spec. Returns the parsed Verdict."""
-    model, effort = REVIEW_MAP["complex"]
-    preamble = contract_preamble("complex")
+def dispatch_final_review(packet_path, codex_bin, run_dir, tier, timeout=DEFAULT_TIMEOUT):
+    """Whole-plan final review: one ``codex exec`` call at ``tier`` (TIER_MAP[tier]
+    — the plan's highest task tier, not a pinned ceiling) with that tier's
+    contract preamble against the whole-plan diff + spec. Returns the parsed
+    Verdict; the header records the resolved model+effort."""
+    model, effort = TIER_MAP[tier]
+    preamble = contract_preamble(tier)
     last_msg_path = os.path.join(run_dir, "final-review-last.txt")
     live_path = os.path.join(run_dir, "final-review-live.log")
     header = "── final review · codex exec · {} · {} ──".format(model, effort)
@@ -607,14 +609,18 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             break
 
     if not escalated and run_base is not None:
-        # Final broad review: whole-plan diff + spec, one sol/high reviewer. No
-        # rework loop at plan level — findings are a human gate. Skipped when the
-        # diff is empty (nothing to review) or cwd is not a git repo (no baseline).
+        # Final broad review: whole-plan diff + spec, one reviewer at the plan's
+        # highest task tier (not a pinned ceiling). No rework loop at plan level —
+        # findings are a human gate. Skipped when the diff is empty (nothing to
+        # review) or cwd is not a git repo (no baseline).
         diff = _git_diff(cwd, run_base)
         if diff.strip():
+            final_tier = max(tasks, key=lambda t: TIER_ORDER.index(t.tier)).tier
             update_run_progress(run_dir, None, "final-review")
             packet_path = _final_packet(spec_path, run_base, diff, run_dir)
-            verdict = dispatch_final_review(packet_path, codex_bin, run_dir, timeout=timeout)
+            verdict = dispatch_final_review(
+                packet_path, codex_bin, run_dir, final_tier, timeout=timeout
+            )
             write_final_review_receipt(run_dir, verdict)
             if verdict.kind == "findings":
                 overall = "escalated-final-review"

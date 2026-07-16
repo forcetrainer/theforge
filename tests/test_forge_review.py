@@ -13,6 +13,72 @@ import unittest
 from _forge_support import *  # noqa: F401,F403
 
 
+# Local, module-scoped copies with a Tier justification: _forge_support.py's
+# shared PLAN_PASS / PLAN_STD_THEN_TRIVIAL fixtures use bare `**Tier:** trivial`
+# with no justification, which forge_plan.py now requires for any off-floor
+# tier (docs/forge/DEFERRALS.md, Task 2 deferral) — kept local rather than
+# editing the shared fixture module, out of this task's scope.
+PLAN_PASS_JUSTIFIED = """# Fixture Plan
+
+**Goal:** Do the thing.
+
+### Task 1: First task
+- [ ] Done
+
+**Files:**
+- Modify: `foo.txt`
+
+**Acceptance:** `true`
+
+**Tier:** trivial — mechanical, single call site
+
+**Depends on:** nothing
+"""
+
+PLAN_STD_THEN_TRIVIAL_JUSTIFIED = """# Fixture Plan
+
+**Goal:** Do the thing.
+
+### Task 1: Standard task
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** standard
+
+**Depends on:** nothing
+
+### Task 2: Trivial follow-up
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** trivial — mechanical, single call site
+
+**Depends on:** Task 1
+"""
+
+# All-standard plan for the final-review max-tier test — PLAN_STD already
+# covers this (standard is the floor tier and needs no justification).
+
+# A single complex-tier task, used to prove the final review of a plan
+# containing a complex task routes to complex-tier (sol·medium), not a pinned
+# ceiling.
+PLAN_COMPLEX = """# Fixture Plan
+
+**Goal:** Do the thing.
+
+### Task 1: Complex task
+- [ ] Done
+
+**Acceptance:** `true`
+
+**Tier:** complex — cross-cutting invariant: shared dispatch contract
+
+**Depends on:** nothing
+"""
+
+
 class ParseVerdictTests(unittest.TestCase):
     """parse_verdict: last parseable JSON object matching the two verdict shapes
     (fenced or bare); anything else raises naming the cause."""
@@ -53,8 +119,10 @@ class ParseVerdictTests(unittest.TestCase):
 
 
 class DispatchReviewerUnitTests(unittest.TestCase):
-    """dispatch_reviewer routes model/effort by REVIEW_MAP[tier] and returns the
-    parsed Verdict — exercised directly against the fake codex (no plan loop)."""
+    """dispatch_reviewer routes model/effort by TIER_MAP[task.tier] — reviewer
+    tier = task tier, fresh context, no separate reviewer table — and returns
+    the parsed Verdict, exercised directly against the fake codex (no plan
+    loop)."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="forge-run-rev-unit-")
@@ -91,7 +159,7 @@ class DispatchReviewerUnitTests(unittest.TestCase):
                         return a
         return None
 
-    def test_standard_reviewer_maps_terra_high(self):
+    def test_standard_reviewer_maps_terra_medium(self):
         run_dir = os.path.join(self.d, "run-s")
         os.makedirs(run_dir)
         task = forge_run.Task(number=1, title="t", tier="standard")
@@ -100,10 +168,10 @@ class DispatchReviewerUnitTests(unittest.TestCase):
         argv = self._argv_for("task-1-review-last")
         self.assertIsNotNone(argv)
         self.assertIn("gpt-5.6-terra", argv)
-        self.assertIn("model_reasoning_effort=high", argv)
+        self.assertIn("model_reasoning_effort=medium", argv)
         self.assertNotIn("ultra", " ".join(argv))
 
-    def test_complex_reviewer_maps_sol_high(self):
+    def test_complex_reviewer_maps_sol_medium(self):
         run_dir = os.path.join(self.d, "run-c")
         os.makedirs(run_dir)
         task = forge_run.Task(number=2, title="t", tier="complex")
@@ -112,8 +180,22 @@ class DispatchReviewerUnitTests(unittest.TestCase):
         argv = self._argv_for("task-2-review-last")
         self.assertIsNotNone(argv)
         self.assertIn("gpt-5.6-sol", argv)
-        self.assertIn("model_reasoning_effort=high", argv)
+        self.assertIn("model_reasoning_effort=medium", argv)
         self.assertNotIn("ultra", " ".join(argv))
+
+
+class ReviewMapRetiredTests(unittest.TestCase):
+    """The once-separate reviewer-routing table is retired: reviewer routing
+    reads TIER_MAP exclusively, and its name is absent from both the forge_run
+    and forge_common namespaces — resolves the codex-execution.md hazard of
+    two tier tables silently going stale against each other on a model-churn
+    edit. (Name built at runtime so this assertion doesn't itself keep the
+    retired symbol alive as a grep hit.)"""
+
+    def test_review_map_absent_from_module_namespaces(self):
+        retired_name = "REVIEW" + "_MAP"
+        self.assertFalse(hasattr(forge_run, retired_name))
+        self.assertFalse(hasattr(forge_run.forge_common, retired_name))
 
 
 class ReviewLoopTests(unittest.TestCase):
@@ -181,7 +263,7 @@ class ReviewLoopTests(unittest.TestCase):
         rev = _find_dispatch(argvs, "task-1-review-last")
         self.assertIsNotNone(rev, argvs)
         self.assertIn("gpt-5.6-terra", rev)
-        self.assertIn("model_reasoning_effort=high", rev)
+        self.assertIn("model_reasoning_effort=medium", rev)
         with open(os.path.join(self.run_dir, "task-1-attempt-1.json")) as f:
             receipt = json.load(f)
         self.assertEqual(receipt["status"], "passed")
@@ -203,7 +285,7 @@ class ReviewLoopTests(unittest.TestCase):
             self.assertIn("GUARDXYZ", f.read())
 
     def test_second_findings_verdict_halts_escalated_and_stops_next_task(self):
-        plan = self._plan(PLAN_STD_THEN_TRIVIAL)
+        plan = self._plan(PLAN_STD_THEN_TRIVIAL_JUSTIFIED)
         self._init_repo()
         res = self._run(plan, responses=[
             {"exit": 0, "msg": ""},                              # t1 worker a1
@@ -235,8 +317,11 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("verdict", res.stderr.lower())
 
-    def test_final_review_dispatched_sol_high_after_all_pass(self):
-        plan = self._plan(PLAN_PASS)  # trivial task: no per-task reviewer
+    def test_final_review_of_all_trivial_plan_routes_to_trivial_tier(self):
+        # A plan whose only task is trivial: no per-task reviewer, but the final
+        # review still runs, at the plan's max tier (trivial -> luna/low) — not
+        # a pinned ceiling.
+        plan = self._plan(PLAN_PASS_JUSTIFIED)  # trivial task: no per-task reviewer
         self._init_repo()
         res = self._run(plan, responses=[
             {"exit": 0, "msg": ""},           # trivial worker
@@ -246,13 +331,47 @@ class ReviewLoopTests(unittest.TestCase):
         argvs = _log_argvs(self.log)
         fr = _find_dispatch(argvs, "final-review-last")
         self.assertIsNotNone(fr, argvs)
-        self.assertIn("gpt-5.6-sol", fr)
-        self.assertIn("model_reasoning_effort=high", fr)
+        self.assertIn("gpt-5.6-luna", fr)
+        self.assertIn("model_reasoning_effort=low", fr)
         # A trivial task never dispatches a per-task reviewer.
         self.assertIsNone(_find_dispatch(argvs, "task-1-review-last"))
 
+    def test_final_review_of_all_standard_plan_routes_to_standard_tier(self):
+        plan = self._plan(PLAN_STD)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},           # worker
+            {"exit": 0, "msg": _pass_msg()},  # task 1 review
+            {"exit": 0, "msg": _pass_msg()},  # final review
+        ])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        fr = _find_dispatch(argvs, "final-review-last")
+        self.assertIsNotNone(fr, argvs)
+        self.assertIn("gpt-5.6-terra", fr)
+        self.assertIn("model_reasoning_effort=medium", fr)
+
+    def test_final_review_of_plan_with_complex_task_routes_to_complex_tier(self):
+        plan = self._plan(PLAN_COMPLEX)
+        self._init_repo()
+        res = self._run(plan, responses=[
+            {"exit": 0, "msg": ""},           # worker
+            {"exit": 0, "msg": _pass_msg()},  # task 1 review (complex tier)
+            {"exit": 0, "msg": _pass_msg()},  # final review
+        ])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argvs = _log_argvs(self.log)
+        rev = _find_dispatch(argvs, "task-1-review-last")
+        self.assertIsNotNone(rev, argvs)
+        self.assertIn("gpt-5.6-sol", rev)
+        self.assertIn("model_reasoning_effort=medium", rev)
+        fr = _find_dispatch(argvs, "final-review-last")
+        self.assertIsNotNone(fr, argvs)
+        self.assertIn("gpt-5.6-sol", fr)
+        self.assertIn("model_reasoning_effort=medium", fr)
+
     def test_final_review_findings_exit_two_status_escalated_final_review(self):
-        plan = self._plan(PLAN_PASS)
+        plan = self._plan(PLAN_PASS_JUSTIFIED)
         self._init_repo()
         res = self._run(plan, responses=[
             {"exit": 0, "msg": ""},                                   # worker
@@ -405,7 +524,7 @@ class ReviewNonGitTests(unittest.TestCase):
 
     def test_trivial_tier_skips_reviewer_dispatch_entirely(self):
         # Non-git cwd: no final review either, so the log must show no reviewer.
-        plan = self._plan(PLAN_PASS)
+        plan = self._plan(PLAN_PASS_JUSTIFIED)
         res = self._run(plan)
         self.assertEqual(res.returncode, 0, res.stderr)
         argvs = _log_argvs(self.log)
