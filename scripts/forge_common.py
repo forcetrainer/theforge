@@ -39,10 +39,11 @@ rp = _load_sibling("forge_run_review_packet", "review-packet.py")
 
 # Tier -> (model, model_reasoning_effort). Single update point on model churn.
 TIER_MAP = {
-    "trivial": ("gpt-5.6-luna", "medium"),
-    "standard": ("gpt-5.6-terra", "high"),
-    "complex": ("gpt-5.6-sol", "high"),
+    "trivial": ("gpt-5.6-luna", "low"),
+    "standard": ("gpt-5.6-terra", "medium"),
+    "complex": ("gpt-5.6-sol", "medium"),
 }
+TIER_ORDER = ("trivial", "standard", "complex")  # ascending; index gives rank
 # Reviewer routing; trivial tier has no reviewer.
 REVIEW_MAP = {
     "standard": ("gpt-5.6-terra", "high"),
@@ -88,6 +89,7 @@ class Task:
     number: int
     title: str
     tier: str
+    tier_justification: str | None = None
     depends_on: list = field(default_factory=list)
     acceptance_commands: list = field(default_factory=list)
     checkbox_line: int = -1
