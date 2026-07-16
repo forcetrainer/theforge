@@ -18,6 +18,7 @@ packaged as a plugin for Claude Code and Codex CLI.
 [What it costs](#what-it-costs) ·
 [Anatomy](#anatomy) ·
 [Install](#install) ·
+[Running on Codex](#running-on-codex) ·
 [Developing](#developing-editing-skills) ·
 [Lineage](#lineage)
 
@@ -104,7 +105,9 @@ brief files, so plan and spec content doesn't pile up in the orchestrator.
 Review scales with risk: trivial tasks just have to pass their acceptance
 commands, bigger tasks get a real review, a second reviewer only steps in if
 the first finds problems, and after two fix rounds it comes back to me. A
-final review covers the whole diff.
+final review covers the whole diff. On Claude Code this dispatch happens
+in-session; on Codex CLI the same shape runs through a deterministic runner
+instead — see [Running on Codex](#running-on-codex).
 
 **Project memory** is three markdown files. `docs/forge/DECISIONS.md` holds
 what was decided and why — it's read before new work, and logged decisions
@@ -131,7 +134,8 @@ they can't skip anything the spec requires.
 | `skills/tdd` | Red-green-refactor cut to its operational core. Test-harness creation is plan-level work, never a drive-by. |
 | `skills/project-memory` | Formats and rules for ROADMAP / DECISIONS / DEFERRALS. |
 | `agents/` | The three tier workers (forge-light, forge-standard, forge-deep), model pinned per harness. |
-| `scripts/` | `extract-brief.py` (plan+spec → worker brief), `review-packet.py` (task block + diff → review packet). Stdlib Python. |
+| `scripts/` — briefs & packets | `extract-brief.py` (plan+spec → worker brief) and `review-packet.py` (task block + diff → review packet). Stdlib; used by both harnesses. |
+| `scripts/` — Codex runtime | `forge-run.py` (the deterministic plan runner — one `codex exec`/task, receipts, per-task commits), `forge-monitor.py` (the live `rich` TUI), and the `forge_*` / `forge_status` helper modules. Stdlib except the monitor, which needs `rich`. |
 | `hooks/session-start` | Injects ~60 words of flow context, only in repos with `docs/forge/` (or legacy `docs/theforge/`, with a rename nudge). Silent everywhere else. |
 
 ## Install
@@ -154,12 +158,24 @@ codex plugin install forge@forge
 ```
 
 The `SessionStart` hook works on Codex without extra wiring — the shared
-`hooks/hooks.json` schema is compatible and Codex sets `CLAUDE_PLUGIN_ROOT`
-for plugin-hook compatibility.
+`hooks/hooks.json` schema is compatible and Codex sets `CLAUDE_PLUGIN_ROOT`.
+Plan execution then runs through forge's own runner, not in-session dispatch
+— see [Running on Codex](#running-on-codex).
 
-Plan execution runs through a deterministic runner instead of in-session
-subagent dispatch — one `codex exec` process per task, pinned model/effort
-per tier:
+## Running on Codex
+
+**Why there's extra machinery here.** Claude Code executes a plan natively —
+it spawns tier workers in-session and has native worktrees, code review, and
+verification to lean on. Codex CLI has none of those, so on Codex forge
+*supplies the execution layer itself*: a deterministic runner in place of
+in-session dispatch, foreground halt-relay in place of native session
+awareness, explicit per-task commits, and a live monitor. The flow, gates,
+and tiers are identical across both harnesses — only the execution substrate
+differs, and everything below is Codex catching up to what Claude gets
+in-harness.
+
+Plan execution runs through the runner — one `codex exec` process per task,
+model/effort pinned per tier:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" <plan.md> --spec <spec.md> --timeout 900
@@ -181,7 +197,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/forge-run.py" --status --run-dir .forge/run
 sh .forge/watch      # standing monitor (forge-monitor.py --follow); the runner prints this at start
 ```
 
-`--follow` watches the newest run and auto-flips to each new run as it starts, so there's no per-run step; the runner writes the `.forge/watch` launcher and prints the short command (`monitor: sh .forge/watch`) so there's no long path to copy. One-shot forms also exist: `forge-monitor.py --latest` (newest run, then exit) or `--run-dir .forge/runs/<name>`. It only reads the run dir (dispatches nothing) and needs `rich` (`pip install rich`); a killed runner shows as `stalled?` rather than a stuck spinner. `--status` above stays the zero-dependency peek.
+`--follow` watches the newest run and auto-flips to each new run as it starts, so there's no per-run step; the runner writes the `.forge/watch` launcher and prints the short command (`monitor: sh .forge/watch`) so there's no long path to copy. One-shot forms also exist: `forge-monitor.py --latest` (newest run, then exit) or `--run-dir .forge/runs/<name>`. It only reads the run dir (dispatches nothing) and needs `rich` (`pip install rich`; on a PEP-668-managed Python use `--break-system-packages` or a venv); a killed runner shows as `stalled?` rather than a stuck spinner. `--status` above stays the zero-dependency peek.
 
 See `skills/planning/codex-execution.md` for the invocation contract,
 halt/resume, and the orchestrator's reduced role. Receipts land in
