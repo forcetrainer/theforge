@@ -76,17 +76,18 @@ is a human decision among:
 tasks skip reviewer dispatch (acceptance commands are the whole
 verification), standard and complex tasks get a reviewer dispatched via
 `codex exec` after acceptance passes. Model/effort per tier lives in
-`forge-run.py`, not here or in any per-tier config file — but in two tables,
-not one: `TIER_MAP` (worker model/effort, all three tiers) and `REVIEW_MAP`
-(reviewer model/effort, standard/complex only). `REVIEW_MAP` currently
-duplicates `TIER_MAP`'s standard/complex rows; a model-churn edit must
-update both, or reviewer routing goes silently stale.
+`forge-run.py`'s `TIER_MAP`. Reviewer dispatch is at the **task's own tier**
+with fresh context, reading `TIER_MAP` directly — the reviewer's value is an
+independent pass, not a stronger model. The formerly-separate reviewer-model
+table is retired outright: there is no second table that could go silently
+stale against `TIER_MAP` on a model-churn edit.
 
 **Final review:** once every task passes, the runner dispatches one more
-`codex exec` call (sol/high) against the whole-plan diff and spec —
-integration issues a per-task review can't see. Findings there halt with
-`escalated-final-review` status; there's no rework loop at plan level, only
-a human gate.
+`codex exec` call, at the model/effort for the **plan's highest task tier**
+(read from `TIER_MAP` — not a pinned sol/high), against the whole-plan diff
+and spec — integration issues a per-task review can't see. Findings there
+halt with `escalated-final-review` status; there's no rework loop at plan
+level, only a human gate.
 
 **Receipts:** ephemeral, `.forge/runs/<timestamp>/` (or an explicit
 `--run-dir`), one JSON receipt per task attempt plus a `run.json` summary.

@@ -62,7 +62,7 @@ declarations only, no bodies. Later tasks must use these exact names.
 
 **Acceptance:** the commands to run and what must pass. An environment-gated skip is not a pass — an acceptance command must assert required infrastructure is present, or make the skip exit non-zero.
 
-**Tier:** trivial | standard | complex
+**Tier:** `standard` (no justification) | `complex — <named decision>` | `trivial — <mechanical rationale>`
 
 **Depends on:** Task M, or nothing.
 ```
@@ -71,11 +71,21 @@ No placeholders at this level: never "TBD", "handle edge cases", or "add validat
 
 **Spec:** is optional — the spec sections this task's worker needs, named by heading text (unique prefix acceptable; matched case-insensitively at extraction time). Omit when the task needs no spec context. It drives mechanical brief extraction at execution (`scripts/extract-brief.py`). Keep it to a **single line of bare, comma-separated heading names** — no parentheticals, no `;`, no wrapping onto a second line, and one spec file per task (`--spec` takes one). The plan's `**Goal:**` is likewise a single non-empty line and is required. Wrapped or parenthetical `**Spec:**`/`**Goal:**` lines fail brief generation.
 
-**Tier** is judged by what the task demands, not its category: a mechanical edit with no design content is trivial; a well-specified change with a clear test path is standard; novel design, cross-file impact, or ambiguous spec territory is complex. A "code implementation" task that's really one field threaded through one call site is trivial, whatever its name. The tier drives model routing and review depth at execution. When interfaces and test cases are fully enumerated, prefer the lower tier — the worker has less to decide, not less to verify.
+**Standard is the default floor** — a task sits there unless evidence moves it, and the burden of proof is on *leaving* standard in either direction. Moving **up** to complex requires a **named** design decision or cross-cutting invariant that standard demonstrably cannot resolve — file count, task category ("code implementation"), "touches core", and "feels complex" name a shape, not a decision, and are **not** evidence. Moving **down** to trivial requires demonstrated mechanicalness — no design content (rename, single config value, one field through one call site); if mechanicalness can't be shown, it is not trivial. A task may touch many files and carry a real test path and still be standard — that alone justifies nothing either way. The tier drives model routing and review depth at execution.
+
+The `Tier:` field carries justification off the floor:
+
+```
+Tier: standard                          # floor — no justification
+Tier: complex — <the named decision>    # e.g. "reconciles two conflicting retry semantics no single call site owns"
+Tier: trivial — <mechanical rationale>  # e.g. "single enum value, one call site, no logic"
+```
+
+`standard` takes no justification (trailing text is ignored); `complex` and `trivial` require a non-empty justification after `— `. The justification's *presence* is mechanically checkable; its *quality* (a real decision vs. a rejected shape) is enforced at authoring by the self-review below, never by a runner script.
 
 ## Self-review
 
-Check the finished plan against the spec with fresh eyes: every task heading is `### Task N:` (three `#`, colon — the extraction scripts require it, and one count of `### Task N:` per task should equal the task count); every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language; each tier holds in both directions — would a smaller model handle this cleanly, and does any "trivial" task hide a design decision? Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
+Check the finished plan against the spec with fresh eyes: every task heading is `### Task N:` (three `#`, colon — the extraction scripts require it, and one count of `### Task N:` per task should equal the task count); every spec requirement maps to a task (add tasks for gaps); nothing contradicts DECISIONS.md; names and signatures are consistent across tasks; dependency order is sound; no placeholder language; every non-standard tier carries a valid, non-categorical justification — a named decision for complex, a demonstrated mechanical rationale for trivial — else push it back to standard. Fix inline and move on. Log any design decisions the plan locked in to DECISIONS.md.
 
 ## Execution
 
@@ -84,14 +94,16 @@ Each task's tier routes to a shipped worker agent. Routing is absolute — the s
 | Tier | Agent | Profile |
 |---|---|---|
 | trivial | `forge:forge-light` | haiku |
-| standard | `forge:forge-standard` | sonnet · high effort |
-| complex | `forge:forge-deep` | opus · xhigh effort |
+| standard | `forge:forge-standard` | sonnet · medium |
+| complex | `forge:forge-deep` | opus · high |
 
-Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") so tiers can be overridden before anything runs:
+These are each provider's stated default, not escalation targets: the stronger settings removed as defaults (xhigh/max) aren't deleted — they remain what a human may bump a halted task to (see rework guardrails), never a default.
+
+Offer the user the choice, with a recommendation by size, and **disclose the resolved routing** in the offer (e.g. "4 standard → forge-standard, 1 complex → forge-deep") plus **each non-standard task's justification** from its `Tier:` line, so an up-tier is visible and overridable before anything runs:
 
 - **Workflow tool unavailable:** read `codex-execution.md` in this skill directory.
 - **Inline when accumulated context is an asset:** few tasks, and later tasks build on seeing earlier work's output. Execute task-by-task in this session using the **tdd** skill — inline work runs on the session model; say so in the offer. Check off steps, commit per task.
-- **Dispatch otherwise — even for serial phases:** worker context is born, used, and discarded; inline context compounds forever. A Workflow script spawns one worker per task as the task's tier agent via `agentType` — its prompt carries the brief-file path (from `scripts/extract-brief.py`), relevant DECISIONS.md content, the deferral rule below, and TDD discipline — pipelined so independent tasks overlap and `Depends on` is respected. All trivial-tier tasks batch into a single `forge-light` dispatch, respecting `Depends on` among them. After each standard or complex task, **one combined review** by `forge:forge-standard` covering spec compliance and code quality together; dispatch a second reviewer on `forge:forge-deep` only if the first finds substantive issues, and loop the implementer until clean.
+- **Dispatch otherwise — even for serial phases:** worker context is born, used, and discarded; inline context compounds forever. A Workflow script spawns one worker per task as the task's tier agent via `agentType` — its prompt carries the brief-file path (from `scripts/extract-brief.py`), relevant DECISIONS.md content, the deferral rule below, and TDD discipline — pipelined so independent tasks overlap and `Depends on` is respected. All trivial-tier tasks batch into a single `forge-light` dispatch, respecting `Depends on` among them. After each standard or complex task, **one combined review** at the task's own tier — a fresh subagent dispatched at the same tier agent as the task, covering spec compliance and code quality together. The reviewer's value is fresh context (an independent pass that hasn't rationalized the work's own defects), not a stronger model: there is no escalation to a stronger reviewer when the first pass finds issues. A finding is not a failure — it triggers same-tier rework by the implementer and re-review at the same tier with fresh context, looping until clean or the rework cap is hit.
 
 `scripts/extract-brief.py` and `scripts/review-packet.py` live at the plugin root (`../../scripts/` from this skill's base directory — see "Base directory for this skill" in the loading message), not in this skill's directory.
 
@@ -103,7 +115,7 @@ Offer the user the choice, with a recommendation by size, and **disclose the res
 
 **Proportional review:** trivial-tier tasks skip subagent review entirely; passing their acceptance commands is verification enough. Standard and complex tasks get the combined review.
 
-**Final review:** once every task in a multi-task plan passes, run one broad review on `forge:forge-deep` against the whole-plan diff and spec — integration issues a per-task review can't see. This runs alongside the full-test-suite close-out below, not instead of it.
+**Final review:** once every task in a multi-task plan passes, run one broad review with fresh context, at the tier agent matching the **plan's highest task tier** (an all-standard plan gets a standard-tier final review, not a pinned `forge:forge-deep`), against the whole-plan diff and spec — integration issues a per-task review can't see. This runs alongside the full-test-suite close-out below, not instead of it.
 
 **Deferral rule:** implementers may skip **non-spec scope** (nice-to-haves, refactors, edge polish) with a `docs/forge/DEFERRALS.md` entry explaining why (formats: project-memory skill). Spec'd requirements are never silently deferred — flag them at the review gate. List all new deferrals in the end-of-plan summary.
 
