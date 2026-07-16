@@ -165,7 +165,7 @@ def _render(state, log_lines) -> "rich renderable"   # ledger panel + live panel
 **Depends on:** Task 2
 
 ### Task 5: Docs + wiring
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `README.md` (monitor usage + `rich` install note)
