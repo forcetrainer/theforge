@@ -45,7 +45,12 @@ def _read_run_tasks(run_dir):
 
 
 def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_commit,
-                   contract_error=None):
+                   contract_error=None, current_task=None, current_phase=None,
+                   started_at=None, updated_at=None, pid=None):
+    """Write ``run.json``. The progress fields (``current_task``/``current_phase``/
+    ``started_at``/``updated_at``/``pid``) are additive and optional — omitted when
+    None, so an old run.json shape and a caller that passes none both stay valid.
+    Per-task ``started_at``/``ended_at`` ride inside the caller's task summaries."""
     os.makedirs(run_dir, exist_ok=True)
     data = {
         "plan": os.path.abspath(plan_path),
@@ -56,6 +61,15 @@ def write_run_json(run_dir, plan_path, spec_path, status, task_summaries, base_c
     }
     if contract_error is not None:
         data["contract_error"] = contract_error
+    for key, value in (
+        ("current_task", current_task),
+        ("current_phase", current_phase),
+        ("started_at", started_at),
+        ("updated_at", updated_at),
+        ("pid", pid),
+    ):
+        if value is not None:
+            data[key] = value
     path = os.path.join(run_dir, "run.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

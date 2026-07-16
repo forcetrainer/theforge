@@ -50,7 +50,7 @@ def run_teed(argv, *, cwd=None, shell=False, timeout, live_path, header) -> TeeR
 **Depends on:** nothing
 
 ### Task 2: run.json progress fields + reader/stale detection
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/forge_receipts.py` (`write_run_json` gains optional progress kwargs)

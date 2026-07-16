@@ -4,12 +4,14 @@ by `forge-run.py --status` and the UserPromptSubmit hook.
 Fixtures write a real run dir (run.json + per-task receipts) to a temp dir; the
 reader/renderers are pure functions over those files.
 """
+import datetime
 import json
 import os
 import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 SCRIPTS = str(pathlib.Path(__file__).resolve().parent.parent / "scripts")
@@ -324,6 +326,79 @@ class DirtyTreeNoRunJsonTests(unittest.TestCase):
                           "--codex-bin", write_fake_codex(d)], cwd=d)
             self.assertEqual(r.returncode, 1)
             self.assertFalse(os.path.exists(os.path.join(rd, "run.json")))
+
+
+def _iso_now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _dead_pid():
+    """A pid that has certainly exited (our own reaped child)."""
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+class ProgressFieldsTests(unittest.TestCase):
+    def _write_ex(self, d, status, tasks, **extra):
+        os.makedirs(d, exist_ok=True)
+        data = {"plan": "/p/plan.md", "spec": "/p/spec.md", "status": status,
+                "base_commit": "abc", "tasks": tasks}
+        data.update(extra)
+        with open(os.path.join(d, "run.json"), "w") as f:
+            json.dump(data, f)
+
+    def test_surfaces_current_task_phase_and_timestamps(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "running", [_summary(1, "passed")],
+                           current_task=2, current_phase="worker",
+                           started_at="2026-07-15T09:00:00Z",
+                           updated_at="2026-07-15T09:05:00Z")
+            st = forge_status.read_run_state(d)
+            self.assertEqual(st["current_task"], 2)
+            self.assertEqual(st["current_phase"], "worker")
+            self.assertEqual(st["started_at"], "2026-07-15T09:00:00Z")
+            self.assertEqual(st["updated_at"], "2026-07-15T09:05:00Z")
+
+    def test_backcompat_missing_fields_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_run(d, "running", [_summary(1, "passed")])
+            st = forge_status.read_run_state(d)
+            self.assertIsNone(st["current_task"])
+            self.assertIsNone(st["current_phase"])
+            self.assertIsNone(st["started_at"])
+            self.assertIsNone(st["updated_at"])
+            self.assertFalse(st["stale"])
+
+    def test_fresh_running_not_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "running", [_summary(1, "passed")], updated_at=_iso_now())
+            st = forge_status.read_run_state(d)
+            self.assertFalse(st["stale"])
+
+    def test_running_past_cutoff_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "running", [_summary(1, "passed")])
+            st = forge_status.read_run_state(d, now=time.time() + 10000)
+            self.assertTrue(st["stale"])
+
+    def test_dead_pid_forces_stale_despite_fresh_heartbeat(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "running", [_summary(1, "passed")], pid=_dead_pid())
+            st = forge_status.read_run_state(d, now=time.time())
+            self.assertTrue(st["stale"])
+
+    def test_terminal_states_never_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "passed", [_summary(1, "passed")])
+            st = forge_status.read_run_state(d, now=time.time() + 10000)
+            self.assertFalse(st["stale"])
+
+    def test_render_shows_stalled_for_stale_running(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write_ex(d, "running", [_summary(1, "passed")])
+            st = forge_status.read_run_state(d, now=time.time() + 10000)
+            self.assertIn("STALLED?", forge_status.render_status(st))
 
 
 if __name__ == "__main__":
