@@ -132,14 +132,17 @@ class CommitDisciplineTests(unittest.TestCase):
         self.assertNotIn("f2.txt", t1)
 
     def test_escalated_task_creates_no_commit(self):
+        # The reviewed task escalates (a persistent in-diff fix finding -> stuck);
+        # an escalated task is never committed. f1.txt is tracked, so the finding
+        # at f1.txt:2 (the appended line) is verified in-diff.
         plan = self._plan(PLAN_COMMIT_STD)
         self._init_repo()
         base = self._head()
         res = self._run(plan, responses=[
             {"exit": 0, "msg": ""},                        # worker a1
-            {"exit": 0, "msg": _findings_msg("f1.txt:1 - x")},  # review a1
+            {"exit": 0, "msg": _fix_findings_msg("f1.txt", "2", "x")},  # review a1
             {"exit": 0, "msg": ""},                        # worker a2
-            {"exit": 0, "msg": _findings_msg("f1.txt:1 - x")},  # review a2 (cap)
+            {"exit": 0, "msg": _fix_findings_msg("f1.txt", "2", "x")},  # review a2 (stuck)
         ])
         self.assertEqual(res.returncode, 2, res.stderr)
         # No task commit — HEAD unchanged from base.
@@ -171,9 +174,9 @@ class CommitDisciplineTests(unittest.TestCase):
         res1 = self._run(plan, responses=[
             {"exit": 0, "msg": ""},                             # t1 worker (trivial)
             {"exit": 0, "msg": ""},                             # t2 worker a1
-            {"exit": 0, "msg": _findings_msg("f2.txt:1 - x")},  # t2 review a1
+            {"exit": 0, "msg": _fix_findings_msg("f2.txt", "2", "x")},  # t2 review a1
             {"exit": 0, "msg": ""},                             # t2 worker a2
-            {"exit": 0, "msg": _findings_msg("f2.txt:1 - x")},  # t2 review a2 (cap)
+            {"exit": 0, "msg": _fix_findings_msg("f2.txt", "2", "x")},  # t2 review a2 (stuck)
         ])
         self.assertEqual(res1.returncode, 2, res1.stderr)
         self.assertNotEqual(self._head(), base)  # task 1 committed

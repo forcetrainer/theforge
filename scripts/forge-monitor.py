@@ -206,7 +206,12 @@ def _banner(state, now):
         ink = Style(color="#1c0d07", bold=True)
         lines = [Text(head, style=ink)]
         if finding:
-            lines.append(Text(finding, style=Style(color="#1c0d07")))
+            # Phase 7 serializes findings as finding_to_dict() objects; older
+            # runs (and the per-task path) still use bare strings — render the
+            # summary either way.
+            text = finding.get("summary", "") if isinstance(finding, dict) else finding
+            if text:
+                lines.append(Text(text, style=Style(color="#1c0d07")))
         return Panel(Group(*lines), box=box.HEAVY, style="on {}".format(HALT), border_style=HALT)
     if st == "contract-error":
         line = Text("■ CONTRACT ERROR — {}     press q to exit".format(state.get("reason") or ""),

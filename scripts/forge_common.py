@@ -57,9 +57,21 @@ CONTRACT_AGENT = {
 
 _ACC_TAIL_CHARS = 2000
 
-# Rework cap: initial attempt + one rework, enforced as a loop counter
-# (DECISIONS 2026-07-13 — the prose cap proved unenforceable).
-MAX_ATTEMPTS = 2
+# Backstop against slow non-convergence, not a target cap — the convergence
+# loop decides pass/rework/halt on per-attempt progress; this is only a
+# seatbelt, raised from the old 2-iteration cap (DECISIONS 2026-07-16: every
+# prior halt at 2 resolved on one more manual run, i.e. the cap was tripping
+# on converging work, not a considered gate).
+MAX_ATTEMPTS_BACKSTOP = 5
+
+# --autofix modes: "auto" applies the disposition matrix (default, fixes the
+# in-diff x contract-breaking quadrant in-loop); "gate" halts on any finding
+# regardless of quadrant — the conservative escape hatch (DECISIONS 2026-07-16).
+AUTOFIX_MODES = ("auto", "gate")
+
+# Halt reasons surfaced on an escalated TaskOutcome / final review (Disposition
+# matrix + Rework loop & convergence specs).
+HALT_REASONS = ("scope-decision", "regression", "stuck", "backstop", "gate")
 
 # Default subprocess timeout (seconds) for worker and reviewer `codex exec`
 # calls; overridable via --timeout. A hung worker/reviewer must not hang the
@@ -76,9 +88,26 @@ ALLOWED_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 REVIEW_VERDICT_INSTRUCTION = (
     "End your message with your verdict as exactly one JSON object and nothing "
     "after it: {\"verdict\": \"pass\"} when the diff satisfies the spec and the "
-    "task, or {\"verdict\": \"findings\", \"findings\": [\"<file:line - issue>\", "
-    "...]} listing every blocking issue as strings. The runner parses the last "
-    "JSON object in your message; emit nothing parseable as JSON after it."
+    "task, or {\"verdict\": \"findings\", \"findings\": [ ... ]} listing every "
+    "issue as a finding object: {\"id\": \"f1\", \"summary\": \"one line\", "
+    "\"location\": {\"file\": \"path\", \"lines\": \"12-20\"}, \"provenance\": "
+    "\"in-diff\" | \"pre-existing\", \"impact\": \"contract-breaking\" | "
+    "\"improvement\", \"contract_ref\": \"acceptance criterion or spec "
+    "section it violates\" | null, \"convergence\": \"resolved\" | \"carried\" "
+    "| \"new\" | null, \"carried_from\": \"prior finding id\" | null, "
+    "\"repair_task\": {\"title\": ..., \"files\": [...], \"spec\": ..., "
+    "\"tests\": [...], \"acceptance\": [...], \"tier\": ...} | null}. "
+    "Classification rules: label impact \"contract-breaking\" only when "
+    "contract_ref names the acceptance criterion or spec section it violates — "
+    "a contract-breaking finding with no contract_ref is treated as "
+    "improvement; a finding whose location falls outside this review's diff is "
+    "pre-existing, never in-diff, regardless of how it reads; repair_task is "
+    "required only when the finding is pre-existing and contract-breaking, "
+    "optional otherwise. Set convergence and carried_from only on a re-review, "
+    "labeling each current finding resolved, carried, or new against the prior "
+    "attempt's findings supplied in the packet — omit both on a first review. "
+    "The runner parses the last JSON object in your message; emit nothing "
+    "parseable as JSON after it."
 )
 
 
@@ -109,9 +138,24 @@ class WorkerResult:
 
 
 @dataclass
+class Finding:
+    id: str
+    summary: str
+    file: str
+    lines: str  # "12-20" or "12"
+    provenance: str  # "in-diff" | "pre-existing" (reviewer-proposed)
+    impact: str  # "contract-breaking" | "improvement"
+    contract_ref: str | None = None
+    convergence: str | None = None  # "resolved" | "carried" | "new" | None
+    carried_from: str | None = None
+    repair_task: dict | None = None
+    disposition: str | None = None  # "fix" | "defer" | "halt" — set by the runner
+
+
+@dataclass
 class Verdict:
     kind: str  # "pass" | "findings"
-    findings: list = field(default_factory=list)
+    findings: list = field(default_factory=list)  # list[Finding]
 
 
 @dataclass
@@ -120,12 +164,41 @@ class TaskOutcome:
     attempts: int
     summary: str
     findings: list = field(default_factory=list)
+    halt_reason: str | None = None
+    deferrals: list = field(default_factory=list)
+    repair_task: dict | None = None
+
+
+def finding_to_dict(finding):
+    """Serialize one Finding for a receipt / run.json — mirrors the reviewer's
+    own wire schema (nested ``location``) so a persisted finding can also be
+    replayed straight into review-packet.py's ``--prior-findings`` input.
+    Passes a bare string through unchanged: forge-run.py's verdict parser
+    still emits the pre-Task-2 ``list[str]`` shape until the classification
+    engine (Task 2) rewrites it to build Finding objects."""
+    if not isinstance(finding, Finding):
+        return finding
+    return {
+        "id": finding.id,
+        "summary": finding.summary,
+        "location": {"file": finding.file, "lines": finding.lines},
+        "provenance": finding.provenance,
+        "impact": finding.impact,
+        "contract_ref": finding.contract_ref,
+        "convergence": finding.convergence,
+        "carried_from": finding.carried_from,
+        "repair_task": finding.repair_task,
+        "disposition": finding.disposition,
+    }
 
 
 def verdict_to_dict(verdict):
     if verdict.kind == "pass":
         return {"verdict": "pass"}
-    return {"verdict": "findings", "findings": list(verdict.findings)}
+    return {
+        "verdict": "findings",
+        "findings": [finding_to_dict(f) for f in verdict.findings],
+    }
 
 
 @dataclass

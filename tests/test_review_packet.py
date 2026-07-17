@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -239,6 +240,82 @@ class ReviewPacketGitFixtureTests(unittest.TestCase):
         out_path = result.stdout.strip()
         self.assertEqual(os.path.dirname(out_path), os.path.abspath(out_dir))
         self.assertEqual(os.path.basename(out_path), "task-1-review.md")
+
+    # --- --prior-findings (Phase 7 Task 5) ---
+
+    def test_no_prior_findings_flag_output_unchanged(self):
+        # Byte-identical to pre-Task-5 behavior: omitting --prior-findings
+        # must not add a section or otherwise perturb the packet.
+        out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        result = run_script(
+            [self.plan_path, "1", "--base", self.commit1, "--out", out_dir]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(result.stdout.strip()) as f:
+            content = f.read()
+        expected = (
+            "### Task 1: First task\n- [ ] Done\n\n**Files:**\n"
+            "- Modify: `foo.txt`\n\n**Acceptance:** `true`\n\n"
+            "**Tier:** trivial\n\n**Depends on:** nothing\n\n"
+            "```diff\ndiff --git a/src.txt b/src.txt\n"
+            "index 2d00bd5..e5c5c55 100644\n--- a/src.txt\n+++ b/src.txt\n"
+            "@@ -1 +1,2 @@\n line one\n+line two\n```\n"
+        )
+        self.assertEqual(content, expected)
+
+    def test_prior_findings_flag_appends_labeled_section(self):
+        prior_findings = [
+            {"id": "f1", "summary": "off-by-one in loop"},
+            {"id": "f2", "summary": "unused import"},
+        ]
+        findings_path = os.path.join(self.repo_dir, "prior-findings.json")
+        with open(findings_path, "w") as f:
+            json.dump(prior_findings, f)
+
+        out_dir = tempfile.mkdtemp(prefix="review-packet-out-")
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        result = run_script(
+            [
+                self.plan_path,
+                "1",
+                "--base",
+                self.commit1,
+                "--out",
+                out_dir,
+                "--prior-findings",
+                findings_path,
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(result.stdout.strip()) as f:
+            content = f.read()
+        self.assertIn("Prior findings", content)
+        self.assertIn(
+            "label each current finding resolved/carried/new against these",
+            content,
+        )
+        self.assertIn("carried_from", content)
+        self.assertIn("f1", content)
+        self.assertIn("f2", content)
+
+    def test_prior_findings_bad_json_exits_nonzero(self):
+        findings_path = os.path.join(self.repo_dir, "prior-findings.json")
+        with open(findings_path, "w") as f:
+            f.write("not json")
+
+        result = run_script(
+            [
+                self.plan_path,
+                "1",
+                "--base",
+                self.commit1,
+                "--prior-findings",
+                findings_path,
+            ]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(findings_path, result.stderr)
 
 
 class ReviewPacketOutsideGitRepoTests(unittest.TestCase):

@@ -4,15 +4,22 @@ self-contained review packet for a reviewer.
 
 Usage:
     review-packet.py <plan.md> <task-number> --base <git-ref> [--out <dir>]
+        [--prior-findings <path>]
 
 Never emits a silently thin packet: any failure to locate the task block or
 to run git exits nonzero with a message on stderr.
+
+``--prior-findings`` points at a JSON file of the prior attempt's findings
+(a persisted finding_to_dict() list replays straight through); when given,
+the packet gains a section instructing the reviewer to label each current
+finding resolved/carried/new against them. Omitted, the packet is unchanged.
 
 The diff is ``git diff <base>``: committed, staged, and unstaged *tracked*
 changes — untracked files are invisible to it. Commit (or at least ``git
 add``) the task's work before generating a packet.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -110,7 +117,23 @@ def diagnose_missing_task(text, task_number, plan_path):
     return "Task {} not found in {}".format(task_number, plan_path)
 
 
-def build_packet(task_block, base, diff_output):
+def build_prior_findings_section(prior_findings):
+    """Render the prior attempt's findings (as loaded from --prior-findings)
+    into a packet section instructing the reviewer to label each current
+    finding against them, echoing the prior id in carried_from. The findings
+    are embedded verbatim as JSON — a persisted finding_to_dict() list
+    replays straight through, ids and all."""
+    body = json.dumps(prior_findings, indent=2)
+    if not body.endswith("\n"):
+        body += "\n"
+    return (
+        "## Prior findings — label each current finding resolved/carried/new "
+        "against these; echo the prior id in carried_from\n\n"
+        "```json\n" + body + "```\n"
+    )
+
+
+def build_packet(task_block, base, diff_output, prior_findings=None):
     if diff_output.strip() == "":
         diff_body = "no changes vs {}\n".format(base)
     else:
@@ -124,7 +147,10 @@ def build_packet(task_block, base, diff_output):
     )
     fence = "`" * max(3, longest_run + 1)
     diff_section = fence + "diff\n" + diff_body + fence + "\n"
-    return task_block.rstrip("\n") + "\n\n" + diff_section
+    packet = task_block.rstrip("\n") + "\n\n" + diff_section
+    if prior_findings is not None:
+        packet += "\n" + build_prior_findings_section(prior_findings)
+    return packet
 
 
 def main(argv=None):
@@ -133,7 +159,36 @@ def main(argv=None):
     parser.add_argument("task_number", type=int)
     parser.add_argument("--base", required=True)
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--prior-findings",
+        default=None,
+        metavar="PATH",
+        help="JSON file of the prior attempt's findings; appends a "
+        "resolved/carried/new labeling section to the packet",
+    )
     args = parser.parse_args(argv)
+
+    prior_findings = None
+    if args.prior_findings is not None:
+        try:
+            with open(args.prior_findings, "r", encoding="utf-8") as f:
+                prior_findings = json.load(f)
+        except OSError as e:
+            print(
+                "error: cannot read prior-findings file {}: {}".format(
+                    args.prior_findings, e
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        except json.JSONDecodeError as e:
+            print(
+                "error: prior-findings file {} is not valid JSON: {}".format(
+                    args.prior_findings, e
+                ),
+                file=sys.stderr,
+            )
+            return 1
 
     try:
         with open(args.plan, "r", encoding="utf-8") as f:
@@ -176,7 +231,7 @@ def main(argv=None):
         print(result.stderr, end="", file=sys.stderr)
         return 1
 
-    packet = build_packet(task_block, args.base, result.stdout)
+    packet = build_packet(task_block, args.base, result.stdout, prior_findings)
 
     out_dir = args.out if args.out else tempfile.mkdtemp()
     try:
