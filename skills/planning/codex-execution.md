@@ -1,10 +1,26 @@
 # Codex execution (no Workflow tool)
 
-Codex CLI has no Workflow tool to spawn/track parallel workers, so plan
-execution runs through `scripts/forge-run.py` — a deterministic runner that
-drives one fresh `codex exec` process per task instead of in-session
-subagent dispatch. The process boundary is what makes it deterministic: no
-parent-model inheritance, no child-thread quota accumulation.
+Codex CLI has no Workflow tool to spawn/track parallel workers. Execution
+**mode** is chosen *before* the harness branch, per the planning skill's
+Execution section: inline when accumulated context is an asset (few tasks,
+later tasks build on earlier output, the change is simple); dispatch
+otherwise. Inline is the same act on both harnesses; only the dispatch
+mechanism is Codex-specific (the runner below).
+
+**Inline (mode = inline):** the Codex session executes the plan task-by-task
+itself — the **tdd** skill (test first, then implementation), an orchestrator
+**self-review** before each commit, and a commit per task, on a clean working
+tree. Inline does **not** invoke the runner and does **not** dispatch a
+separate reviewer — TDD + acceptance commands are the objective check (the
+same inline contract Claude follows). Use it for the low end (simple edits,
+doc updates, mechanical changes, small plans) that never needed the runner.
+
+**Dispatch (mode = dispatch):** plan execution runs through
+`scripts/forge-run.py` — a deterministic runner that drives one fresh
+`codex exec` process per task instead of in-session subagent dispatch. The
+process boundary is what makes it deterministic: no parent-model inheritance,
+no child-thread quota accumulation. The rest of this document specifies the
+runner (the dispatch branch).
 
 **Invocation:** after the execution approval gate, the orchestrator runs the runner in the **foreground** (not backgrounded) so a halt surfaces in the conversation the instant it happens (see Session awareness):
 

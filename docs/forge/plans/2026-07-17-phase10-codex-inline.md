@@ -31,7 +31,7 @@
 **Depends on:** nothing.
 
 ### Task 2: codex-execution.md inline branch
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `skills/planning/codex-execution.md` (add a leading inline-branch section; frame existing runner content as the dispatch branch)
