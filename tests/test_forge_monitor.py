@@ -209,8 +209,15 @@ class TerminalAndBannerTests(unittest.TestCase):
             _write_run(d, status="escalated-final-review", current_task=None,
                        current_phase=None, tasks=tasks)
             with open(os.path.join(d, "final-review.json"), "w") as f:
+                # Phase 7 (Task 6) shape: findings are finding_to_dict() objects,
+                # not bare strings — the monitor must render the summary field.
                 json.dump({"verdict": "findings",
-                           "findings": ["integration: elapsed drops on resume"]}, f)
+                           "findings": [{"id": "f1",
+                                         "summary": "elapsed drops on resume",
+                                         "location": {"file": "x.py", "lines": "1"},
+                                         "provenance": "in-diff",
+                                         "impact": "contract-breaking",
+                                         "disposition": "fix"}]}, f)
             out = _render(forge_status.read_run_state(d))
             self.assertIn("HALTED", out)
             self.assertIn("final review", out.lower())
