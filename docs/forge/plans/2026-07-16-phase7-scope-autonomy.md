@@ -200,7 +200,7 @@ Backward-compatible: new params default None so existing callers and old run.jso
 **Depends on:** Task 1.
 
 ### Task 7: Autofix flag, deferral aggregation, doc-sync stage
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/forge-run.py` (`--autofix` argparse + threading; deferral aggregation into run.json; dispatch_doc_sync + terminal call site)

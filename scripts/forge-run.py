@@ -66,6 +66,7 @@ import forge_status
 # calls these by bare name, and tests/docs address them as ``forge_run.<name>``.
 from forge_common import (  # noqa: F401
     ALLOWED_EFFORTS,
+    AUTOFIX_MODES,
     CONTRACT_AGENT,
     DEFAULT_TIMEOUT,
     MAX_ATTEMPTS_BACKSTOP,
@@ -979,16 +980,213 @@ def run_final_review_loop(spec_path, run_base, run_dir, codex_bin, cwd, tier,
         # rework: fix_findings (set above) drives the next attempt's fix dispatch.
 
 
+# --- terminal doc-sync stage ------------------------------------------------
+
+
+# Reconcile-only instruction for the doc-sync worker. Kept here (not in the
+# agents/*.md contract) because the doc_sync verdict shape is a runner concern,
+# mirroring REVIEW_VERDICT_INSTRUCTION's split.
+DOC_SYNC_INSTRUCTION = (
+    "Reconcile EXISTING documentation to the shipped whole-plan diff below: "
+    "update stale references, changed signatures/behavior, spec changelog "
+    "entries, and ROADMAP status that the diff made inaccurate. Edit only docs "
+    "that already exist and that the diff affects — never author new "
+    "documentation, and never touch code. If you find a documentation/contract "
+    "contradiction you cannot mechanically reconcile (a doc asserts something "
+    "the shipped code now contradicts, and choosing the correct side is a human "
+    "decision), make no edit and end your message with exactly one JSON object "
+    'and nothing after it: {"doc_sync": "contradiction", "contradiction": '
+    '"<what conflicts>"}. Otherwise make the edits directly and end with '
+    '{"doc_sync": "reconciled"} (or {"doc_sync": "clean"} when nothing needed '
+    "changing). Emit nothing parseable as JSON after that object."
+)
+
+
+@dataclass
+class DocSyncResult:
+    """Outcome of the terminal doc-sync stage. ``status`` is ``reconciled`` (docs
+    were stale; the edits landed as one ``docs: sync`` commit), ``clean`` (no doc
+    drift, no commit), or ``halt`` (an unreconcilable doc/contract contradiction —
+    or a dispatch that produced no usable result — so the run stops for a human,
+    no commit). ``commit`` is the ``docs: sync`` SHA when one landed; ``reconciled``
+    the doc paths it touched; ``contradiction`` the named conflict/cause on a
+    halt."""
+
+    status: str
+    commit: str | None = None
+    reconciled: list = field(default_factory=list)
+    contradiction: str | None = None
+
+
+def _doc_sync_brief(spec_path, diff, run_dir):
+    """Write the doc-sync prompt: the spec + reconcile-only instruction + the
+    shipped whole-plan ``diff`` fenced with a dynamic-length fence (like
+    _final_review_fix_brief, so a diff line that is itself a ``` fence can't close
+    the block early). Overwritten fresh; there is exactly one doc-sync stage."""
+    with open(spec_path, "r", encoding="utf-8") as f:
+        spec_text = f.read()
+    diff_body = diff if diff.strip() else "(no changes)\n"
+    if not diff_body.endswith("\n"):
+        diff_body += "\n"
+    longest_run = max(
+        (len(m.group(0)) for m in re.finditer(r"`+", diff_body)), default=0
+    )
+    fence = "`" * max(3, longest_run + 1)
+    diff_section = fence + "diff\n" + diff_body + fence + "\n"
+    brief = (
+        spec_text.rstrip("\n") + "\n\n"
+        + DOC_SYNC_INSTRUCTION + "\n\n"
+        + "## Whole-plan diff\n\n" + diff_section
+    )
+    brief_path = os.path.join(run_dir, "doc-sync-brief.md")
+    with open(brief_path, "w", encoding="utf-8") as f:
+        f.write(brief)
+    return brief_path
+
+
+def _parse_doc_sync(last_message):
+    """The doc-sync worker's verdict: the last parseable JSON object carrying a
+    ``doc_sync`` key (``reconciled`` | ``clean`` | ``contradiction``), or None when
+    it emitted none. Same last-object-wins scan as parse_verdict, keyed on a
+    different field. A missing verdict is *not* a contract error here — git is the
+    authoritative record of what changed (the commit decision reads the staged
+    tree, not this verdict); the verdict only signals an unreconcilable
+    contradiction that must halt."""
+    decoder = json.JSONDecoder()
+    found = None
+    i = 0
+    n = len(last_message)
+    while i < n:
+        if last_message[i] != "{":
+            i += 1
+            continue
+        try:
+            obj, end = decoder.raw_decode(last_message, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(obj, dict) and "doc_sync" in obj:
+            found = obj
+        i = end
+    return found
+
+
+def _git_commit_doc_sync(cwd):
+    """Stage and commit the doc-sync worker's edits as one ``docs: sync`` commit
+    (Commit discipline). Returns ``(sha, reconciled_paths)``, or ``(None, [])``
+    when nothing was staged (the worker changed no doc) or ``cwd`` is not a git
+    repo. Mirrors _git_commit_final_review_fixes' empty-stage guard; the
+    reconciled list is the staged path set (``git diff --cached --name-only``) —
+    authoritative over any worker self-report."""
+    if _git_head(cwd) is None:
+        return None, []
+    add = subprocess.run(["git", "add", "-A"], cwd=cwd, capture_output=True, text=True)
+    if add.returncode != 0:
+        raise RuntimeError(
+            "git add -A for doc-sync failed in {}: {}".format(cwd, add.stderr.strip())
+        )
+    names = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=cwd,
+        capture_output=True, text=True,
+    )
+    reconciled = [p for p in names.stdout.splitlines() if p.strip()]
+    if not reconciled:
+        return None, []  # nothing staged -> skip, no empty commit
+    commit = subprocess.run(
+        ["git", "commit", "-m", "docs: sync"], cwd=cwd, capture_output=True, text=True,
+    )
+    if commit.returncode != 0:
+        raise RuntimeError(
+            "git commit for doc-sync failed in {}: {}".format(cwd, commit.stderr.strip())
+        )
+    return _git_head(cwd), reconciled
+
+
+def dispatch_doc_sync(spec_path, run_base, diff, run_dir, tier, codex_bin, cwd,
+                      timeout=DEFAULT_TIMEOUT):
+    """Terminal doc-sync stage (Terminal doc-sync stage spec): one ``codex exec``
+    dispatch that reconciles EXISTING documentation to the shipped whole-plan
+    ``diff`` — stale references, changed signatures/behavior, spec changelog,
+    ROADMAP status — never authoring new docs and never touching code. Runs only
+    after final review passes (the caller's guard). Returns a DocSyncResult:
+
+    - the worker names an unreconcilable doc/contract contradiction -> ``halt``
+      (no commit; the run stops for a human, the conflict named);
+    - the worker edited an existing doc -> ``reconciled``, committed ``docs: sync``;
+    - nothing changed -> ``clean``, no commit.
+
+    A dispatch that crashes or times out also halts with the cause named — it
+    produced no usable result, and silently treating that as "no drift" would
+    mask the failure (fail-loud, like a reviewer crash)."""
+    model, effort = TIER_MAP[tier]
+    preamble = contract_preamble(tier)
+    brief_path = _doc_sync_brief(spec_path, diff, run_dir)
+    with open(brief_path, "r", encoding="utf-8") as f:
+        brief = f.read()
+    prompt = preamble + "\n\n" + brief
+    last_msg_path = os.path.join(run_dir, "doc-sync-last.txt")
+    argv = [
+        codex_bin,
+        "exec",
+        "-m",
+        model,
+        "-c",
+        "model_reasoning_effort={}".format(effort),
+        "--output-last-message",
+        last_msg_path,
+        prompt,
+    ]
+    if os.path.exists(last_msg_path):
+        os.remove(last_msg_path)  # never re-read a prior stage's message
+    live_path = os.path.join(run_dir, "doc-sync-live.log")
+    header = "── doc-sync · codex exec · {} · {} ──".format(model, effort)
+    update_run_progress(run_dir, None, "doc-sync")
+    result = run_teed(argv, timeout=timeout, live_path=live_path, header=header)
+    if result.timed_out:
+        return DocSyncResult(
+            status="halt",
+            contradiction="doc-sync dispatch timed out after {}s without a "
+            "usable result".format(timeout),
+        )
+    if result.exit_code != 0:
+        tail = (result.tail or "").strip()[:300]
+        return DocSyncResult(
+            status="halt",
+            contradiction="doc-sync dispatch exited {}{}".format(
+                result.exit_code, ": " + tail if tail else ""),
+        )
+    last_message = ""
+    if os.path.exists(last_msg_path):
+        with open(last_msg_path, "r", encoding="utf-8") as f:
+            last_message = f.read()
+    verdict = _parse_doc_sync(last_message)
+    if verdict is not None and verdict.get("doc_sync") == "contradiction":
+        return DocSyncResult(
+            status="halt",
+            contradiction=verdict.get("contradiction") or "(unspecified contradiction)",
+        )
+    sha, reconciled = _git_commit_doc_sync(cwd)
+    if sha is None:
+        return DocSyncResult(status="clean")
+    return DocSyncResult(status="reconciled", commit=sha, reconciled=reconciled)
+
+
 def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=None,
-             timeout=DEFAULT_TIMEOUT):
+             timeout=DEFAULT_TIMEOUT, autofix_mode="auto"):
     """Sequential whole-plan loop. Tasks already ``passed`` in this run-dir (a
     resume) are skipped; the rest run through execute_task in dependency order.
     Halts on the first escalation. After every task passes, one plan-level final
-    review runs against the whole-plan diff + spec (git repo required).
-    ``effort_overrides`` (``{task_number: level}``, from repeatable ``--effort
-    N=LEVEL``) must reference only task numbers present in the plan — an
-    unknown number raises naming the cause. ``timeout`` bounds every worker and
-    reviewer ``codex exec`` call."""
+    review runs against the whole-plan diff + spec (git repo required), and — once
+    that passes — a terminal doc-sync stage reconciles existing docs to the
+    shipped diff. ``autofix_mode`` (``auto`` | ``gate``, chosen at the execution
+    offer) threads into every per-task and final-review convergence decision:
+    ``auto`` runs the disposition matrix, ``gate`` halts on any finding.
+    Defer-disposition findings from every task and the final review aggregate into
+    ``run.json`` under ``deferrals`` (the runner never writes DEFERRALS.md — the
+    orchestrator does, at completion). ``effort_overrides`` (``{task_number:
+    level}``, from repeatable ``--effort N=LEVEL``) must reference only task
+    numbers present in the plan — an unknown number raises naming the cause.
+    ``timeout`` bounds every worker and reviewer ``codex exec`` call."""
     # Clean-tree precondition (every invocation, first run and resume): commit
     # discipline only yields clean per-task/whole-plan boundaries if the tree
     # starts clean. Checked before creating the run dir or `.forge/` gitignore so
@@ -1049,6 +1247,11 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
     summary_by_num = {s["number"]: s for s in task_summaries}
     overall = "passed"
     escalated = False
+    # Defer-disposition findings aggregate here across every task and the final
+    # review; surfaced in the terminal run.json (the orchestrator writes them into
+    # DEFERRALS.md at completion — the runner never touches that curated doc).
+    deferrals = []
+    doc_sync_record = None
 
     # Incremental run.json: write `running` before the first task so --status/the
     # monitor can distinguish an in-progress run from a dead one, and rewrite after
@@ -1091,7 +1294,9 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
         outcome = execute_task(
             task, plan_path, spec_path, run_dir, codex_bin, cwd,
             effort_override=effort_overrides.get(task.number), timeout=timeout,
+            autofix_mode=autofix_mode,
         )
+        deferrals.extend(outcome.deferrals)
         print("task {}: {} ({} attempt(s))".format(
             task.number, outcome.status, outcome.attempts), flush=True)
         summary.update({
@@ -1129,15 +1334,39 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             final_tier = max(tasks, key=lambda t: TIER_ORDER.index(t.tier)).tier
             final_outcome = run_final_review_loop(
                 spec_path, run_base, run_dir, codex_bin, cwd, final_tier,
-                "auto", timeout=timeout,
+                autofix_mode, timeout=timeout,
             )
+            deferrals.extend(final_outcome.deferrals)
             if final_outcome.status == "escalated":
                 overall = "escalated-final-review"
+            else:
+                # Terminal doc-sync: reconcile existing docs to the shipped diff,
+                # only now that every code gate is green (never masks a code
+                # defect as drift). The diff is recomputed so it includes any
+                # `fix: final-review` commit the loop just landed. A doc/contract
+                # contradiction it cannot mechanically reconcile halts the run.
+                doc_sync = dispatch_doc_sync(
+                    spec_path, run_base, _git_diff(cwd, run_base), run_dir,
+                    final_tier, codex_bin, cwd, timeout=timeout,
+                )
+                doc_sync_record = {
+                    "status": doc_sync.status,
+                    "commit": doc_sync.commit,
+                    "reconciled": doc_sync.reconciled,
+                }
+                if doc_sync.contradiction:
+                    doc_sync_record["contradiction"] = doc_sync.contradiction
+                if doc_sync.status == "halt":
+                    overall = "escalated-doc-sync"
 
     # Terminal write: no current_task/current_phase, so the pointer is cleared —
-    # the monitor stops the spinner and paints the terminal-state banner.
+    # the monitor stops the spinner and paints the terminal-state banner. The
+    # autonomy record (autofix_mode always; deferrals/doc_sync when present) rides
+    # the final write for --status and the orchestrator's completion summary.
     write_run_json(run_dir, plan_path, spec_path, overall, task_summaries, run_base,
-                   started_at=run_started, pid=run_pid)
+                   started_at=run_started, pid=run_pid,
+                   deferrals=deferrals or None, autofix_mode=autofix_mode,
+                   doc_sync=doc_sync_record)
     return 0 if overall == "passed" else 2
 
 
@@ -1195,6 +1424,15 @@ def main(argv=None):
         help="seconds before a worker/reviewer codex subprocess is killed "
         "(default: {})".format(DEFAULT_TIMEOUT),
     )
+    parser.add_argument(
+        "--autofix",
+        choices=AUTOFIX_MODES,
+        default="auto",
+        help="review-finding autonomy (chosen at the execution offer): `auto` "
+        "runs the disposition matrix (fix in-diff contract-breaking, defer "
+        "improvements, halt a pre-existing scope decision); `gate` halts on any "
+        "finding (default: auto)",
+    )
     args = parser.parse_args(argv)
 
     # Read-only status mode: print the run summary from run.json + receipts and
@@ -1218,6 +1456,7 @@ def main(argv=None):
         return run_plan(
             args.plan, args.spec, run_dir, args.codex_bin, os.getcwd(),
             effort_overrides=effort_overrides, timeout=args.timeout,
+            autofix_mode=args.autofix,
         )
     except RuntimeError as e:
         print("error: {}".format(e), file=sys.stderr)
