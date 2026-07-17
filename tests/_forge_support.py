@@ -252,7 +252,27 @@ def _pass_msg():
 
 
 def _findings_msg(*items):
-    return json.dumps({"verdict": "findings", "findings": list(items)})
+    """Build a ``findings`` verdict in the per-finding schema (Phase 7 Reviewer
+    verdict contract) from summary strings. Each item becomes one finding object
+    with the string as its ``summary``; findings are ``improvement`` with no
+    location so they parse without the contract-breaking location requirement —
+    enough for the loop's ``kind == "findings"`` rework/escalation behavior, which
+    is all these fixtures assert."""
+    findings = [
+        {
+            "id": "f{}".format(i),
+            "summary": item,
+            "location": None,
+            "provenance": "in-diff",
+            "impact": "improvement",
+            "contract_ref": None,
+            "convergence": None,
+            "carried_from": None,
+            "repair_task": None,
+        }
+        for i, item in enumerate(items, 1)
+    ]
+    return json.dumps({"verdict": "findings", "findings": findings})
 
 
 # --- Phase 5: commit discipline fixtures -----------------------------------

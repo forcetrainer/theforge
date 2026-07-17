@@ -39,6 +39,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 
@@ -71,6 +72,7 @@ from forge_common import (  # noqa: F401
     TIER_MAP,
     TIER_ORDER,
     AcceptanceResult,
+    Finding,
     Task,
     TaskOutcome,
     Verdict,
@@ -201,28 +203,71 @@ def run_acceptance(task, cwd, live_path=None):
 # --- reviewer dispatch & verdict --------------------------------------------
 
 
+def _finding_from_obj(obj):
+    """Build one Finding from a reviewer finding object (the per-finding schema —
+    nested ``location`` mirrored by finding_to_dict). The reviewer-proposed
+    provenance/impact ride through unchanged; the runner verifies/derives them
+    later (classify_findings). Raises RuntimeError when the finding is not an
+    object, or when a ``contract-breaking`` finding omits its location — without a
+    file/line to point at, provenance cannot be verified against the diff, so an
+    unlocated contract-breaking claim is a contract error, never a silent guess
+    (Reviewer verdict contract; DECISIONS 2026-07-11)."""
+    if not isinstance(obj, dict):
+        raise RuntimeError(
+            "reviewer finding is not a JSON object (per-finding schema required); "
+            "got: " + repr(obj)[:200]
+        )
+    location = obj.get("location") or {}
+    file = location.get("file")
+    lines = location.get("lines")
+    impact = obj.get("impact")
+    if impact == "contract-breaking" and (file is None or lines is None):
+        raise RuntimeError(
+            "reviewer finding {!r} is contract-breaking but omits its location "
+            "(location.file/location.lines) — provenance cannot be verified "
+            "against the diff".format(obj.get("id"))
+        )
+    return Finding(
+        id=obj.get("id"),
+        summary=obj.get("summary", ""),
+        file=file,
+        lines=lines,
+        provenance=obj.get("provenance"),
+        impact=impact,
+        contract_ref=obj.get("contract_ref"),
+        convergence=obj.get("convergence"),
+        carried_from=obj.get("carried_from"),
+        repair_task=obj.get("repair_task"),
+    )
+
+
 def _verdict_from_obj(obj):
-    """Map a decoded JSON value to a Verdict if it matches a verdict shape, else
-    None. ``{"verdict": "pass"}`` -> pass; ``{"verdict": "findings", "findings":
-    [str, ...]}`` -> findings; anything else is not a verdict."""
-    if not isinstance(obj, dict) or obj.get("verdict") is None:
-        return None
+    """Build the Verdict from a recognized verdict-shaped object (``verdict`` is
+    ``pass`` or ``findings``; the authoritative last one in the stream). ``pass``
+    carries no findings; ``findings`` parses each finding object into a Finding via
+    _finding_from_obj — which raises loudly on a malformed or unlocated
+    contract-breaking finding rather than dropping it."""
     if obj["verdict"] == "pass":
         return Verdict(kind="pass")
-    if obj["verdict"] == "findings":
-        findings = obj.get("findings")
-        if isinstance(findings, list) and all(isinstance(x, str) for x in findings):
-            return Verdict(kind="findings", findings=list(findings))
-    return None
+    raw = obj.get("findings")
+    if not isinstance(raw, list):
+        raise RuntimeError(
+            "reviewer findings verdict has no findings list; got: "
+            + repr(obj)[:300]
+        )
+    return Verdict(kind="findings", findings=[_finding_from_obj(f) for f in raw])
 
 
 def parse_verdict(last_message):
     """Extract the reviewer verdict: the last parseable JSON object in the
-    message (fenced or bare) matching a verdict shape. Anything else raises
-    RuntimeError naming the cause — never guessed, never retried silently
-    (DECISIONS 2026-07-11)."""
+    message (fenced or bare) whose ``verdict`` is ``pass`` or ``findings``. No
+    such object raises RuntimeError naming the cause; a recognized findings
+    verdict with a malformed / unlocated contract-breaking finding raises from
+    _verdict_from_obj — never guessed, never retried silently (DECISIONS
+    2026-07-11). The recognizer (last-object-wins) is deliberately separate from
+    the strict build so only the authoritative verdict is parsed."""
     decoder = json.JSONDecoder()
-    found = None
+    found = None  # last verdict-shaped raw dict in the stream
     i = 0
     n = len(last_message)
     while i < n:
@@ -234,9 +279,8 @@ def parse_verdict(last_message):
         except ValueError:
             i += 1
             continue
-        verdict = _verdict_from_obj(obj)
-        if verdict is not None:
-            found = verdict
+        if isinstance(obj, dict) and obj.get("verdict") in ("pass", "findings"):
+            found = obj
         i = end  # skip past the parsed object
     if found is None:
         raise RuntimeError(
@@ -244,7 +288,108 @@ def parse_verdict(last_message):
             '({"verdict": "pass"} or {"verdict": "findings", "findings": [...]}); '
             "got: " + repr(last_message.strip()[:300])
         )
-    return found
+    return _verdict_from_obj(found)
+
+
+# --- classification: provenance verification + disposition matrix -----------
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def diff_line_ranges(diff_text):
+    """Parse a unified diff into ``{file_path: [(start, end), ...]}`` — the
+    new-side line ranges each hunk touches, in file order. The current file is
+    taken from ``+++ b/<path>`` lines (``+++ /dev/null`` = a deletion, no new
+    side); each ``@@ -a,b +c,d @@`` header contributes the range ``(c, c+d-1)``,
+    with an omitted count defaulting to 1 and a zero count (pure-deletion hunk)
+    contributing no new-side range. This is the diff half of provenance
+    verification — a finding is in-diff iff its lines intersect one of these."""
+    ranges = {}
+    current = None
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path == "/dev/null":
+                current = None
+            else:
+                if path.startswith("b/"):
+                    path = path[2:]
+                current = path
+            continue
+        if line.startswith("@@"):
+            m = _HUNK_RE.match(line)
+            if not m or current is None:
+                continue
+            start = int(m.group(1))
+            count = int(m.group(2)) if m.group(2) is not None else 1
+            if count <= 0:
+                continue  # pure-deletion hunk: no new-side lines to point at
+            ranges.setdefault(current, []).append((start, start + count - 1))
+    return ranges
+
+
+def _parse_lines(lines):
+    """Parse a finding's ``lines`` field (``"12-20"`` or ``"12"``) into an
+    inclusive ``(lo, hi)`` pair, or None when absent/unparseable (an improvement
+    finding may carry no location — it defers regardless of provenance)."""
+    if not lines:
+        return None
+    try:
+        text = str(lines).strip()
+        if "-" in text:
+            lo, hi = text.split("-", 1)
+            return int(lo), int(hi)
+        n = int(text)
+        return n, n
+    except (ValueError, TypeError):
+        return None
+
+
+def verify_provenance(finding, ranges):
+    """Runner-verified provenance: ``in-diff`` when the finding's lines intersect
+    one of the changed ranges for its file, else ``pre-existing`` — overriding any
+    optimistic reviewer claim (a finding outside the diff is pre-existing no
+    matter how it was labeled; Disposition matrix)."""
+    span = _parse_lines(finding.lines)
+    if span is None:
+        return "pre-existing"
+    lo, hi = span
+    for start, end in ranges.get(finding.file, []):
+        if lo <= end and start <= hi:  # inclusive-range overlap
+            return "in-diff"
+    return "pre-existing"
+
+
+def derive_disposition(finding):
+    """Disposition matrix over (verified provenance × contract-gated impact).
+    Impact is ``contract-breaking`` only when the reviewer named the violated
+    acceptance criterion / spec section in ``contract_ref`` — a null contract_ref
+    downgrades it to ``improvement`` (named-evidence rule, mirroring the
+    tier-policy floor). Quadrants: in-diff×contract-breaking → ``fix`` (the only
+    auto-fix cell); pre-existing×contract-breaking → ``halt`` (a real scope
+    decision); every improvement → ``defer``."""
+    contract_breaking = (
+        finding.impact == "contract-breaking" and finding.contract_ref is not None
+    )
+    if not contract_breaking:
+        return "defer"
+    return "fix" if finding.provenance == "in-diff" else "halt"
+
+
+def classify_findings(verdict, diff_text):
+    """Set each finding's runner-verified provenance and derived disposition
+    against ``diff_text`` (the review's actual diff), then return the verdict.
+    A pass verdict is returned unchanged. The reviewer proposes classification;
+    the runner decides — provenance is recomputed from the diff and disposition
+    is derived from the matrix, never trusted from the reviewer."""
+    if verdict.kind != "findings":
+        return verdict
+    ranges = diff_line_ranges(diff_text)
+    for finding in verdict.findings:
+        finding.provenance = verify_provenance(finding, ranges)
+        finding.disposition = derive_disposition(finding)
+    return verdict
 
 
 def _dispatch_review_call(model, effort, preamble, packet_path, codex_bin, last_msg_path,
@@ -429,9 +574,14 @@ def execute_task(task, plan_path, spec_path, run_dir, codex_bin, cwd,
             verdict = dispatch_reviewer(task, packet_path, codex_bin, run_dir, timeout=timeout)
             review_verdict = verdict_to_dict(verdict)
             if verdict.kind == "findings":
-                iteration_findings = list(verdict.findings)
+                # parse_verdict now yields Finding objects; the current loop still
+                # treats any findings verdict as rework and carries the summary
+                # text into the next brief (the disposition-aware convergence loop
+                # is Task 3). Extract the human-readable summaries so the carry /
+                # receipt stay JSON-serializable list[str] as before.
+                iteration_findings = [f.summary for f in verdict.findings]
                 failure_summary = "review findings: {}".format(
-                    "; ".join(verdict.findings) if verdict.findings else "(unspecified)"
+                    "; ".join(iteration_findings) if iteration_findings else "(unspecified)"
                 )
 
         passed = failure_summary is None

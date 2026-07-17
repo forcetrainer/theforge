@@ -80,43 +80,10 @@ PLAN_COMPLEX = """# Fixture Plan
 """
 
 
-class ParseVerdictTests(unittest.TestCase):
-    """parse_verdict: last parseable JSON object matching the two verdict shapes
-    (fenced or bare); anything else raises naming the cause."""
-
-    def test_bare_pass(self):
-        v = forge_run.parse_verdict('{"verdict": "pass"}')
-        self.assertEqual(v.kind, "pass")
-
-    def test_findings_extracted_from_prose_and_fence(self):
-        msg = (
-            "Here is my review of the diff.\n\n"
-            "```json\n"
-            '{"verdict": "findings", "findings": ["a.py:3 - missing guard"]}\n'
-            "```\n\nThat is all.\n"
-        )
-        v = forge_run.parse_verdict(msg)
-        self.assertEqual(v.kind, "findings")
-        self.assertEqual(v.findings, ["a.py:3 - missing guard"])
-
-    def test_unparseable_prose_raises_naming_cause(self):
-        with self.assertRaises(RuntimeError) as ctx:
-            forge_run.parse_verdict("Looks good to me, ship it.")
-        self.assertIn("verdict", str(ctx.exception).lower())
-
-    def test_malformed_json_raises(self):
-        with self.assertRaises(RuntimeError):
-            forge_run.parse_verdict('{"verdict": ')
-
-    def test_last_matching_object_wins(self):
-        msg = (
-            '{"verdict": "pass"}\n'
-            "on reflection...\n"
-            '{"verdict": "findings", "findings": ["x"]}'
-        )
-        v = forge_run.parse_verdict(msg)
-        self.assertEqual(v.kind, "findings")
-        self.assertEqual(v.findings, ["x"])
+# parse_verdict coverage moved to tests/test_forge_classify.py::ParseVerdictTests
+# with the Phase 7 per-finding schema (Finding objects, loud contract error on an
+# unlocated contract-breaking finding); the old list[str] cases here are retired
+# rather than left as stale duplicates asserting the removed contract.
 
 
 class DispatchReviewerUnitTests(unittest.TestCase):

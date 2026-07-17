@@ -60,7 +60,7 @@ def verdict_to_dict(verdict) -> dict: ...   # now serializes Finding list via fi
 **Depends on:** nothing.
 
 ### Task 2: Classification engine
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/forge-run.py` (parse_verdict/_verdict_from_obj rewrite; diff_line_ranges; verify_provenance; derive_disposition; classify_findings)
