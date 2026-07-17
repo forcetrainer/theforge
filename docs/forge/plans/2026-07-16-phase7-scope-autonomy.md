@@ -153,7 +153,7 @@ Reuses convergence_decision + classify_findings; diff base = run-start HEAD; tie
 **Depends on:** Task 3.
 
 ### Task 5: Prior-findings review packet
-- [ ] Done
+- [x] Done
 
 **Files:**
 - Modify: `scripts/review-packet.py` (`--prior-findings PATH` argument + packet section)
