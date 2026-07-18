@@ -159,8 +159,8 @@ def _live_panel(state, log_lines):
     phase = state.get("current_phase")
     if cur is not None:
         title = "▸ task {} · {} · codex exec".format(cur, phase or "…")
-    elif phase == "final-review":
-        title = "▸ final review · codex exec"
+    elif (phase or "").startswith("final-review"):
+        title = "▸ final review · codex exec" if phase == "final-review" else "▸ final review (auto-fix) · codex exec"
     else:
         title = "▸ log"
     if log_lines:
@@ -242,7 +242,7 @@ def _is_terminal(state):
 
 
 def _current_log_path(run_dir, state):
-    if state.get("current_phase") == "final-review":
+    if (state.get("current_phase") or "").startswith("final-review"):
         return os.path.join(run_dir, "final-review-live.log")
     cur = state.get("current_task")
     if cur is not None:

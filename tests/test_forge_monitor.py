@@ -88,6 +88,21 @@ class HelperTests(unittest.TestCase):
     def test_tail_missing_file_is_empty(self):
         self.assertEqual(forge_monitor._tail("/no/such.log", 5), [])
 
+    def test_current_log_path_tails_final_review_during_autofix(self):
+        # The runner sets current_phase="final-review-fix" while dispatching a
+        # fix for a final-review finding (current_task stays None throughout);
+        # the monitor must still resolve the same live log as plain
+        # "final-review", not fall through to "no path" ("waiting for output").
+        state = {"current_task": None, "current_phase": "final-review-fix"}
+        self.assertEqual(
+            forge_monitor._current_log_path("/run/dir", state),
+            os.path.join("/run/dir", "final-review-live.log"),
+        )
+
+    def test_current_log_path_none_for_unrelated_phase(self):
+        state = {"current_task": None, "current_phase": "doc-sync"}
+        self.assertIsNone(forge_monitor._current_log_path("/run/dir", state))
+
 
 class RenderTests(unittest.TestCase):
     def test_running_marks_current_task_and_lists_roster(self):
@@ -114,6 +129,13 @@ class RenderTests(unittest.TestCase):
             _write_run(d)
             out = _render(forge_status.read_run_state(d), log_lines=[])
             self.assertIn("waiting for output", out.lower())
+
+    def test_live_panel_titles_final_review_autofix_distinctly(self):
+        panel = forge_monitor._live_panel(
+            {"current_task": None, "current_phase": "final-review-fix"},
+            ["some fix output"],
+        )
+        self.assertIn("auto-fix", panel.title)
 
     def test_completed_shows_complete_banner(self):
         with tempfile.TemporaryDirectory() as d:

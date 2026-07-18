@@ -1039,6 +1039,14 @@ def run_plan(plan_path, spec_path, run_dir, codex_bin, cwd, effort_overrides=Non
             escalated = True
             break
 
+    # Resuming a run where every remaining task was already `passed` skips the
+    # loop's own write_run_json calls entirely (each iteration just `continue`s),
+    # leaving run.json's tasks stamped `queued` from the seed write above for the
+    # whole final-review phase. Flush the corrected summaries before entering it.
+    if not escalated:
+        write_run_json(run_dir, plan_path, spec_path, "running", task_summaries,
+                       run_base, started_at=run_started, pid=run_pid)
+
     if not escalated and run_base is not None:
         # Final broad review: whole-plan diff + spec, one reviewer at the plan's
         # highest task tier (not a pinned ceiling), now run through the same

@@ -136,9 +136,18 @@ def read_run_state(run_dir, now=None):
     raw_status = run.get("status") if run else None
     state = _STATE_MAP.get(raw_status, "running") if run else "running"
 
-    # Per-task list: prefer run.json summaries, fall back to receipts.
+    # Per-task list: prefer run.json summaries, fall back to receipts. A resumed
+    # run whose remaining tasks were all already `passed` can leave a summary
+    # stamped `queued` from the seed write (see forge-run.py) even though a
+    # receipt already recorded the pass — a receipt's `passed` always outranks
+    # a summary's stale `queued` for the same task number.
     if run and run.get("tasks"):
         summaries = run["tasks"]
+        for s in summaries:
+            r = receipts.get(s.get("number"))
+            if r and s.get("status") == "queued" and r.get("status") == "passed":
+                s["status"] = "passed"
+                s["attempts"] = r.get("attempt", s.get("attempts", 1))
     else:
         summaries = [
             {"number": n, "status": r.get("status"), "attempts": r.get("attempt", 1)}

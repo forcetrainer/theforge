@@ -119,6 +119,23 @@ class ReadRunStateTests(unittest.TestCase):
             _write_run(d, "running", [_summary(1, "passed")])
             self.assertEqual(forge_status.read_run_state(d)["state"], "running")
 
+    def test_stale_queued_summary_overlaid_by_passed_receipt(self):
+        # A resume where every remaining task was already `passed` can leave
+        # run.json's tasks stamped `queued` from the seed write until the run's
+        # terminal write — the receipt is the fresher truth in that window.
+        with tempfile.TemporaryDirectory() as d:
+            _write_run(d, "running", [_summary(1, "queued", attempts=0)])
+            _write_receipt(d, 1, 2, "passed")
+            task = forge_status.read_run_state(d)["tasks"][0]
+            self.assertEqual(task["status"], "passed")
+            self.assertEqual(task["attempts"], 2)
+
+    def test_queued_summary_without_matching_receipt_stays_queued(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_run(d, "running", [_summary(1, "queued", attempts=0)])
+            task = forge_status.read_run_state(d)["tasks"][0]
+            self.assertEqual(task["status"], "queued")
+
     def test_passed_status_maps_to_completed(self):
         with tempfile.TemporaryDirectory() as d:
             _write_run(d, "passed", [_summary(1, "passed")])
